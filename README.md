@@ -11,6 +11,13 @@ exactly the configuration running in production: the hardware layer is this
 repository; the "brain" is Hermes via
 [`rusty4444/hermes-voice-ha-integration`](https://github.com/rusty4444/hermes-voice-ha-integration).
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/byjaps/esp32-max35-tv)](https://github.com/byjaps/esp32-max35-tv)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.8.2-green.svg)](https://esphome.io)
+[![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](hardware/README.md)
+[![HA Role](https://img.shields.io/badge/Home%20Assistant-Conversation%20Agent-blueviolet.svg)](hermes/README.md)
+[![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](#)
+
 ## Features
 
 - **Voice**: wake word (okay nabu) or push-to-talk (BOOT button ≥600 ms),
