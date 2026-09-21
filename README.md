@@ -37,6 +37,21 @@ repository; the "brain" is Hermes via
   (`RealDeco/xiaozhi-esphome`, `spotpear-tv_hw.yaml`) — do not trust
   LLM-generated pinouts for this board.
 
+### Where to buy
+
+The board is sold under the "mini TV" camera-and-voice devboard family. On
+**AliExpress** just search **"Xiaozhi max tv"** (the board ships with XiaoZhi
+firmware, hence the name). The MAX35-TV-W is the 3.5" reversion here.
+
+### Photos
+
+| | |
+|---|---|
+| ![Product](assets/panel-in-action.jpg) | ![Product](assets/product-1.webp) |
+| Real panel running this HUD (idle) | Front view (AliExpress) |
+| ![Product](assets/product-2.webp) | ![HUD states](assets/preview-painel.png) |
+| Board view (AliExpress) | The 5 HUD states + media screen (rendered) |
+
 ### Disabled features
 
 Some board hardware is deliberately not enabled in this firmware. See

@@ -22,8 +22,14 @@ The board is the **Spotpear ESP32-S3 MAX35-TV** (`ESP32S3-MAX35-TV-W`).
 | `OV5640` / `GC0308` camera model PDFs | Camera module specs — [link](https://cdn.static.spotpear.com/uploads/picture/learn/ESP32/ESP32S3-MAX35-Only-Board/OV5640camera%20model%20.pdf) |
 | Factory firmware | `ESP32S3-MAX35-TV-EN.bin` (16 MB, offset 0x0) + `flash_download_tool-2.zip` — [wiki](https://spotpear.com/wiki/ESP32-S3-3.5-inch-LCD-TV-Display-Deepseek.html) |
 
+## Buying
+
+The board ships under the "mini TV" family. On **AliExpress**, search **"Xiaozhi max
+tv"** (it ships with XiaoZhi firmware — hence the name; the `-W` suffix is the
+3.5" reversion here).
+
 (Larger binaries — factory firmware, flash tool, DWG, STEP — are download-only
-to keep this repo lean; use the official links above. See `LINKS.md`.)
+to keep this repo lean; use the official links above.)
 
 ## Key hardware facts this firmware relies on
 
