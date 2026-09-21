@@ -13,7 +13,7 @@ repository; the "brain" is Hermes via
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/byjaps/esp32-max35-tv)](https://github.com/byjaps/esp32-max35-tv)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.8.2-green.svg)](https://esphome.io)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0-green.svg)](https://esphome.io)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](hardware/README.md)
 [![HA Role](https://img.shields.io/badge/Home%20Assistant-Conversation%20Agent-blueviolet.svg)](hermes/README.md)
 [![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](#)
@@ -82,9 +82,9 @@ to re-enable:
 4. **Compile + OTA** the YAML.
 5. Set up the Assist pipeline to use Hermes as its conversation agent.
 
-> ⚠️ **Build with ESPHome 2026.8.2.** The same code compiled with 2026.9.0
-> reboots this board every ~60 s (see [`docs/troubleshooting.md`](docs/troubleshooting.md)).
-> Validate any change with `esphome config` before flashing.
+> ✅ **Builds and runs on ESPHome 2026.9.0** (the current release). The board
+> runs it stable for hours. Validate any change with `esphome config` before
+> flashing.
 
 ## Repository layout
 
