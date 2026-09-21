@@ -25,8 +25,8 @@ again. From the directory holding your `secrets.yaml` and this YAML:
 esphome run esp32-max35-tv.yaml
 ```
 
-> ⚠️ **Use ESPHome 2026.8.2** — see `troubleshooting.md` (the 2026.9.0 build
-> reboots this board every ~60 s). Validate first: `esphome config`.
+> ✅ **ESPHome 2026.9.0 is the current, supported build** — the board runs it
+> stable (see `troubleshooting.md`). Validate first: `esphome config`.
 
 ## 3. Home Assistant side
 
