@@ -1,0 +1,1271 @@
+# =============================================================================
+# ESP32-S3 MAX35-TV (Spotpear) - Hermes Voice Assistant + HUD  [v0.15.1]
+#
+# Turn the Spotpear ESP32-S3 MAX35-TV into a local voice assistant for Hermes
+# Agent, running as a Home Assistant Assist satellite. Wake word / push-to-talk
+# -> local STT -> Hermes (as the HA Conversation Agent) -> TTS on the panel
+# speaker. See the README for the full setup and the Hermes/HA side.
+#
+# Hardware base verified against the ORIGINAL manufacturer/RealDeco file:
+#   RealDeco/xiaozhi-esphome  devices/Under_Development/Modular/HW/spotpear-tv_hw.yaml
+#
+# History (condensed):
+#   v0.3.0  (12/09) first version running on the physical board
+#   v0.11.x (12/09) media player on the panel speaker + I2S bus deadlock fix
+#   v0.12.x (12/09) media screen, single volume, volume survives reboots
+#   v0.13.x (12/09) audible floor + distortion ceiling, volume by event
+#   v0.14.x (12/09) "arc reactor" animated HUD on the display (ported from the
+#                   jarvis_ai canvas, no LVGL)
+#   v0.15.0 (20/09) button gestures: short=single click (volume +10%), double
+#                   click (volume -10%), >=600ms press (push-to-talk)
+#   v0.15.1 (20/09) "Last reset reason" sensor (diagnose the 2026.9.0 reboots)
+#
+# Build/version note: compiled with ESPHome 2026.8.2 ON PURPOSE. The same code
+# compiled with 2026.9.0 rebooted the board every ~60s (seen in log: uptime
+# 3.4s -> 63.5s -> 2.5s) and the bootloader even did a silent rollback to the
+# previous build. Other ESP32 boards in the same HA showed nothing, but on this
+# one (S3 + octal PSRAM) it is reproducible. See docs/troubleshooting.md.
+# =============================================================================
+
+substitutions:
+  name: esp32-max35-tv
+  friendly_name: "Mini TV Assistant"
+  rotate_display: "0"
+  # --- VOLUME CEILING --------------------------------------------------------
+  # The ES8311 saturates above ~0 dB. The driver wants 0xBF (= 0.75 on the
+  # speaker's 0-1 range, the old "75%"); above that speech becomes
+  # unrecognisable and music distorts. The ceiling is enforced on the UI scale:
+  # 100% on any control (HA/number/display) = 0.75 on the speaker. Nothing on
+  # the UI goes past this.
+  # Volume scale: 0-100 in the UI -> vol_min..vol_max on the speaker (raw 0-1).
+  # On the ES8311, register 0x32 is -95.5 dB (0x00) .. 0 dB (0xBF=191) ..
+  # +32 dB (0xFF), linear: dB = reg*0.5 - 95.5. Hence:
+  #   vol_min 0.35 -> reg 89  -> -51 dB (the lowest that is still audible;
+  #                 below this is a dead zone - the old "35" was -62 dB)
+  #   vol_max 0.75 -> reg 191 -> 0 dB (max BEFORE distorting). 0.80 (+6.5 dB)
+  #                 already distorted - tested and rejected.
+  vol_min: "0.35"
+  vol_max: "0.75"
+  vol_default: "75"   # initial volume, in % of the UI scale
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: true
+  min_version: 2026.8.0
+  project:
+    name: hermes.max35-tv
+    version: "0.15.1"
+  # The `speaker` component starts with volume 1.0, which writes 0xFF to the
+  # ES8311 volume register = MAXIMUM GAIN. The ES8311 driver wants 0xBF
+  # (0 dB) - 0xFF is far above and the signal SATURATES. Exact symptom: music
+  # / a melody still sounds like a note (a saturated tone keeps its pitch), but
+  # SPEECH becomes unrecognisable, with noise on top.
+  # on_boot at -100 runs AFTER the speaker setup (PROCESSOR = 0), so this
+  # correction wins over the 1.0.
+  on_boot:
+    priority: -100
+    then:
+      # DISPLAY: start the display refresh loop (see the ecra_loop script).
+      # -100 runs after every setup() (the display is already initialised), so
+      # the screen is alive from boot.
+      - script.execute: {id: ecra_loop}
+      # VOLUME: the `number` rules (restored between reboots). The media
+      # player restores ITS OWN preferences, which may differ - that was the
+      # source of the 100% that saturated the ES8311. Align both to the number.
+      # The 5% floor avoids waking the speaker muted if the preference is corrupt.
+      - lambda: "id(vol_pct) = (id(vol_speaker).state >= 5.0f) ? id(vol_speaker).state : ${vol_default};"
+      # Raw speaker.volume_set: here the value is vol_min..vol_max on the
+      # speaker, NOT the UI scale - hence the linear remap min + pct*(max-min).
+      - speaker.volume_set:
+          id: box_speaker
+          volume: !lambda "return ${vol_min} + (id(vol_pct) / 100.0f) * (${vol_max} - ${vol_min});"
+      # (The media player scale is the UI scale; volume_max remaps it.)
+      - media_player.volume_set:
+          id: painel_mp
+          volume: !lambda "return id(vol_pct) / 100.0f;"
+      # START the wake word engine. start() gives up if the component is not
+      # yet in the loop phase (is_ready()), and on_boot runs during setup - so
+      # the delay is REQUIRED. The interval below retries as a safety net.
+      - delay: 10s
+      - micro_wake_word.start:
+          id: mww
+
+esp32:
+  variant: ESP32S3
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+  # INFO (was DEBUG temporarily, to capture the I2C scan and the wake word
+  # start - that phase is closed). Less noise and less CPU formatting lines
+  # nobody reads.
+  level: INFO
+  logs:
+    # The display redraws at ~4 fps and EACH frame costs ~150 ms measured in
+    # the log ("ecra_loop took a long time for an operation (150 ms), max is
+    # 50 ms"). The cost is STRUCTURAL, not a fault: mipi_spi pushes the whole
+    # buffer (480x320x16 bits = 307 KB; just SPI at 40 MHz is ~61 ms) and has
+    # no partial update. Silencing only this tag (warnings) - [E] still appear
+    # - keeps the log from filling with a warning that repeats every frame.
+    component: ERROR
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    # No `encryption:` on purpose: encrypted OTA only exists in ESPHome 2026.9.0+
+    # and this build is made with 2026.8.2 (the version the board is stable on).
+    # Re-add it when the panel runs a 2026.9.0 build.
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: NONE   # no delay in the voice response
+
+# --- SERVICE BUTTONS ---------------------------------------------------------
+button:
+  - platform: restart
+    name: "Restart"
+  - platform: template
+    name: "Sound test"
+    icon: "mdi:music-note"
+    on_press:
+      - rtttl.play: "escala:d=8,o=5,b=180:c,d,e,f,g,a,b,c6"
+
+# --- BUTTON GESTURES (single / double / long press) --------------------------
+# There are TWO buttons on the case (BOOT and POWER) but only BOOT reaches the
+# ESP32. The POWER button sits on the power latch circuit (IC U1 + Q1/Q2
+# APM2307 + the Power_EN net, in the ESP32S3-3.5inch-AI-1.pdf schematic): no
+# GPIO touches it, so the firmware cannot see it nor give it gestures - power
+# on/off is handled by the latch electronics, whatever the press duration.
+# Gestures implemented on the single readable button (GPIO0):
+#   short click (<=400 ms) ......... volume +10%
+#   double click (2x <=400 ms) ..... volume -10%
+#   press >=600 ms ................. voice assistant (push-to-talk)
+# The 400/600 ms leave a 200 ms dead zone ON PURPOSE: it guarantees no tap
+# sequence fires two gestures at once (with matching click/press thresholds a
+# borderline tap would fire both).
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      inverted: true
+    id: boot_button
+    name: "Button"
+    on_multi_click:
+      # --- short click: volume +10% ---
+      - timing:
+          - ON for at most 400ms
+          - OFF for at least 350ms
+        then:
+          - logger.log:
+              # level INFO: the logger is at INFO; without this (DEBUG) the
+              # gesture left no trace in the board log.
+              format: "Button: single click -> volume +10%"
+              level: INFO
+          - script.execute: {id: vol_step, delta: 10.0}
+      # --- double click: volume -10% ---
+      - timing:
+          - ON for at most 400ms
+          - OFF for at most 300ms
+          - ON for at most 400ms
+          - OFF for at least 350ms
+        then:
+          - logger.log:
+              # level INFO: the logger is at INFO; without this (DEBUG) the
+              # gesture left no trace in the board log.
+              format: "Button: double click -> volume -10%"
+              level: INFO
+          - script.execute: {id: vol_step, delta: -10.0}
+      # --- long press: push-to-talk ---
+      # RELIABLE path to talk to Hermes: the English wake words fail with a
+      # pt-PT accent (verified). Press (>=600 ms) = listening; release ends
+      # and sends.
+      - timing:
+          - ON for at least 600ms
+        then:
+          - logger.log:
+              # level INFO: the logger is at INFO; without this (DEBUG) the
+              # gesture left no trace in the board log.
+              format: "PUSH-TO-TALK: listening..."
+              level: INFO
+          # If media is playing, stop it first: the speaker and microphone
+          # share the I2S bus and without this the conversation never starts.
+          - if:
+              condition:
+                lambda: "return id(mp_playing);"
+              then:
+                - media_player.stop: painel_mp
+          - voice_assistant.start:
+    # Do NOT send voice_assistant.stop on release. HA closes the audio itself
+    # when its VAD detects the end of speech (event 12) and the board stops
+    # the microphone at that instant. Sending stop on release cut the
+    # transcription mid-way - the whisper medium takes ~3 s - and that was
+    # what forced keeping the finger on the button (verified in the log).
+
+  # --- CHARGER CONNECTED (GPIO7) ---------------------------------------------
+  # The board's red LED is not usable for this: it is tied to the CHG pin of
+  # the charger (MP2636), not a GPIO - it lights only while current flows and
+  # goes off seconds after the battery is full. What tells whether the
+  # charger is plugged in is GPIO7: the schematic (ESP32S3-3.5inch-AI-1.pdf)
+  # shows the USB voltage divided by R59 (20K) / R61 (30K) onto that pin
+  # (5 V -> 3.0 V on the pin, which the ADC reads; 0 V with the cable out).
+  - platform: template
+    name: "Charger connected"
+    id: carregador_ligado
+    device_class: plug
+    icon: "mdi:power-plug"
+    # No update_interval: the template binary_sensor does not accept that
+    # field - ESPHome re-evaluates the lambda itself whenever `usb_voltage`
+    # changes.
+    lambda: |-
+      float v = id(usb_voltage).state;
+      if (isnan(v)) return {};
+      return v > 3.5f;   // USB present (~5 V) vs cable out (~0 V)
+
+# --- STATE (HUD) -------------------------------------------------------------
+# 0=idle 1=listening 2=thinking 3=speaking 4=error
+globals:
+  - id: va_state
+    type: int
+    restore_value: no
+    initial_value: "0"
+  # Not decorative: this is the lock that stops the wake word engine from
+  # grabbing the I2S bus while media is playing. With the engine running, the
+  # speaker does
+  #   [E][i2s_audio.speaker.std]: Parent bus is busy
+  # in a loop, and the board SEIZED UP (stopped answering WiFi and had to be
+  # power-cycled). See the media player section.
+  - id: mp_playing
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # Instant (millis) at which the media player became "armed" (command
+  # accepted). Used to unlock the case where nothing ends up playing (dead
+  # URL, or someone fiddling with the HA card) - without this the wake word
+  # engine would stay stopped forever.
+  - id: mp_armado_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  # Single speaker volume, in %. The `number` (HA) and the `media_player`
+  # (HA card) BOTH write to the same speaker - without a single value they
+  # diverge (caught once at 65% and 82% at the same time) and the higher one
+  # saturates the ES8311.
+  - id: vol_pct
+    type: float
+    restore_value: no
+    initial_value: "75.0"
+  # Accumulated ring animation angle, in degrees. Advances by TIME (degrees
+  # per second, per state) and not by frame: so changing the "Animation (fps)"
+  # number changes the smoothness, not the animation speed.
+  - id: rot_deg
+    type: float
+    restore_value: no
+    initial_value: "0"
+  # Instant (millis) until which the HUD shows the VOLUME instead of the voice
+  # state. This is the visible feedback for button clicks (see the vol_step
+  # script): without it, a click to change the volume gave NO signal when
+  # nothing was playing.
+  - id: vol_aviso_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+script:
+  - id: hud_set
+    parameters:
+      state: int
+    then:
+      - lambda: |-
+          id(va_state) = state;
+      - component.update: main_display
+
+  # --- DISPLAY: refresh loop (fps adjustable live) ---------------------------
+  # The display is on `update_interval: never` - this is what triggers draws.
+  # The pace comes from the "Animation (fps)" number: 0 to stop, or raise /
+  # lower without recompiling, which is what lets you measure the effect of
+  # the screen SPI on the audio (the I2S bus is shared with the mic and the
+  # speaker).
+  # Nothing is drawn when the screen is off (CPU saving when the backlight is
+  # off - the rest of the state keeps updating at 1 Hz).
+  - id: ecra_loop
+    mode: restart
+    then:
+      - while:
+          condition:
+            lambda: "return true;"
+          then:
+            - if:
+                condition:
+                  light.is_on: screen_light
+                then:
+                  - component.update: main_display
+            - delay: !lambda |-
+                float f = id(anim_fps).state;
+                if (f < 0.5f) return (uint32_t) 1000;
+                if (f > 15.0f) f = 15.0f;
+                return (uint32_t) (1000.0f / f);
+
+  # Returns the wake word engine to listening AS SOON AS IT CAN.
+  # The speaker holds the I2S bus while it still has buffered audio and only
+  # releases it when the amplifier powers off - you hear a click. Starting the
+  # engine before that fails, so it retries in a short loop instead of waiting
+  # a fixed time (which was a guess: sometimes it listened, sometimes not).
+  # The screen only goes "idle" when the engine is ACTUALLY listening - before
+  # it said "idle" a few seconds early.
+  - id: mww_resume
+    mode: restart
+    then:
+      - delay: 1s
+      - repeat:
+          count: 15
+          then:
+            - if:
+                condition:
+                  all:
+                    - not:
+                        micro_wake_word.is_running:
+                    # NEVER while media is playing: the engine grabbed the I2S
+                    # bus and the speaker died (see globals/mp_playing).
+                    - lambda: "return !id(mp_playing);"
+                then:
+                  - micro_wake_word.start:
+                      id: mww
+                  - delay: 400ms
+      - logger.log: "Wake word engine listening again"
+      - script.execute: {id: hud_set, state: 0}
+
+  # --- MEDIA PLAYER: release the I2S bus -------------------------------------
+  # The mic and the speaker share the SAME I2S bus on this board (one
+  # peripheral, one mutex in ESPHome) and the wake word engine grabs it while
+  # listening. If the media player starts with the engine running, the speaker
+  # fails:
+  #   [E][i2s_audio.speaker.std]: Parent bus is busy
+  #   [E][i2s_audio.speaker:115]: Driver failed to start; retrying in 1 second
+  # This is NOT solved with the `on_play` trigger: it only fires when the
+  # pipeline actually starts playing (speaker_media_player.cpp: state=PLAYING),
+  # which never happens while the bus is held -> permanent deadlock. So the
+  # lock is taken in `on_turn_on` (fires when the COMMAND arrives, before the
+  # pipeline plays) and the state is returned to OFF in `on_idle` so the next
+  # command fires again. This deadlock on 12/09 left the board repeating bus
+  # errors until it stopped responding (had to be power-cycled).
+  - id: mp_stop_wake
+    then:
+      - lambda: "id(mp_playing) = true; id(mp_armado_ms) = millis();"
+      - if:
+          condition:
+            micro_wake_word.is_running:
+          then:
+            - micro_wake_word.stop:
+                id: mww
+            - logger.log: "Media: wake word engine stopped (I2S bus free)"
+
+  # End of media: release the lock and return the engine to listening. Unlike
+  # voice_assistant there is no "audio finished" event - on_idle arrives when
+  # the pipeline stops. Never during a voice conversation (va_state == 0 =
+  # idle).
+  # The condition must be the `mp_playing` global, NOT `media_player.is_idle`:
+  # `on_idle` immediately sets the player to OFF (to rearm on_turn_on) and
+  # `is_idle` would stay false forever, leaving the engine dead.
+  - id: mp_idle_resume
+    mode: restart
+    then:
+      - delay: 2s
+      - if:
+          condition:
+            all:
+              - lambda: "return !id(mp_playing);"
+              - lambda: "return id(va_state) == 0;"
+          then:
+            - script.execute: {id: mww_resume}
+
+  # --- VOLUME VIA BUTTON (10% clicks) ----------------------------------------
+  # Called by the BOOT button gestures (see on_multi_click). Always goes
+  # through the `number` via make_call(), which runs its set_action: it is the
+  # only path that writes to the speaker AND the media player and keeps
+  # `vol_pct` coherent. Writing directly to the speaker from here left the
+  # three at different values.
+  - id: vol_step
+    parameters:
+      delta: float
+    then:
+      - lambda: |-
+          float v = id(vol_pct) + delta;
+          if (v > 100.0f) v = 100.0f;
+          if (v < 0.0f) v = 0.0f;
+          id(vol_aviso_ms) = millis() + 1500;
+          auto call = id(vol_speaker).make_call();
+          call.set_value(v);
+          call.perform();
+      - component.update: main_display
+
+# --- SPEAKER VOLUME ----------------------------------------------------------
+# The speaker starts at volume 1.0 = MAXIMUM ES8311 gain (saturates). This
+# control lets you tune the volume live from HA, without reflashing firmware.
+number:
+  - platform: template
+    name: "Speaker volume"
+    id: vol_speaker
+    icon: "mdi:volume-high"
+    optimistic: true
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 75
+    # Persists the value across reboots: this is what rules the speaker
+    # volume. Without it, every update/reboot reset to 75 and wiped the
+    # chosen value.
+    restore_value: true
+    set_action:
+      - speaker.volume_set:
+          id: box_speaker
+          # 0-100 on the UI -> vol_min..vol_max on the speaker (audible floor
+          # + ceiling)
+          volume: !lambda "return ${vol_min} + (x / 100.0f) * (${vol_max} - ${vol_min});"
+      # One volume only: the same value (in the UI scale) goes to the media
+      # player, which has another control on the HA card. Without this the two
+      # diverged and whichever was higher overwrote the speaker.
+      - lambda: "id(vol_pct) = x;"
+      - if:
+          condition:
+            lambda: "return fabsf(x / 100.0f - id(painel_mp).volume) > 0.02f;"
+          then:
+            - media_player.volume_set:
+                id: painel_mp
+                volume: !lambda "return x / 100.0f;"
+
+  # Screen animation pace (see the ecra_loop script). 0 = ring stopped, but
+  # the screen keeps updating 1x/s (clock and state changes).
+  # Each frame costs ~150 ms (mipi_spi pushes the whole buffer, 307 KB). At
+  # 4 fps that is ~60% of the main loop time just drawing - changing this
+  # entity is the way to balance smoothness/CPU without recompiling. Going
+  # above 6-7 fps is only worth it if you confirm the voice does not degrade.
+  - platform: template
+    name: "Animation (fps)"
+    id: anim_fps
+    icon: "mdi:speedometer"
+    entity_category: config
+    optimistic: true
+    unit_of_measurement: "fps"
+    min_value: 0
+    max_value: 15
+    step: 1
+    initial_value: 4
+    restore_value: true
+
+# --- MEDIA TITLE (what is playing) -------------------------------------------
+# The ESPHome media player does NOT receive metadata from HA (neither title
+# nor station) - the API only carries the URL. This `text` is the bridge: HA
+# writes here (text.set, entity "Media title") and the media screen shows it.
+# If nobody writes, the screen shows "Radio / Music".
+text:
+  - platform: template
+    name: "Media title"
+    id: mp_titulo
+    icon: "mdi:music-note"
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 60
+    initial_value: ""
+
+# --- DIAGNOSTICS (temporary) --------------------------------------------------
+# Every 60s shows whether the engine is listening and whether the models are
+# active. "models OFF" = HA sent an empty list in on_set_configuration and
+# disabled them all.
+interval:
+  # --- MEDIA WATCHDOG (2 s) --------------------------------------------------
+  # Only reads globals (cheap) and covers the paths the media player trigger
+  # does NOT catch.
+  - interval: 2s
+    then:
+      # (1) The wake word engine must never run with media armed: it grabs the
+      #     I2S bus and the speaker repeats "bus is busy" forever.
+      - if:
+          condition:
+            all:
+              - lambda: "return id(mp_playing);"
+              - micro_wake_word.is_running:
+          then:
+            - micro_wake_word.stop:
+                id: mww
+      # (2) Unlock: armed for more than 10 s without anything playing or
+      #     announcing (command accepted but the pipeline never started: dead
+      #     URL, or someone fiddling with the HA card). Without this the wake
+      #     word never came back.
+      - if:
+          condition:
+            all:
+              - lambda: "return id(mp_playing) && (millis() - id(mp_armado_ms) > 10000);"
+              - not:
+                  media_player.is_playing: painel_mp
+              - not:
+                  media_player.is_announcing: painel_mp
+          then:
+            - logger.log: "Media: armed without playing >10s -> unlocking"
+            - lambda: "id(mp_playing) = false;"
+            - media_player.turn_off:
+                id: painel_mp
+            - script.execute: {id: mww_resume}
+      # (3) Volume: the `number` rules (source of truth, restored across
+      #     reboots). Here it only PUSHES that value to the media player, so
+      #     the HA card does not show something else. The reverse direction
+      #     (changing the card) is caught by `on_volume` - no polling and no
+      #     fight between the two.
+      #     Do NOT "adopt" the media player volume here: the component
+      #     DISCARDS volume sets when its queue is full (`xQueueSend(..., 0)`,
+      #     "volume sets aren't that important!"), so its value stays stuck at
+      #     an old value and the number jumped back (seen: number stuck at
+      #     90/100).
+      - if:
+          condition:
+            lambda: "return fabsf(id(vol_pct) / 100.0f - id(painel_mp).volume) >= 0.02f;"
+          then:
+            - media_player.volume_set:
+                id: painel_mp
+                volume: !lambda "return id(vol_pct) / 100.0f;"
+
+  - interval: 60s
+    then:
+      # If media is playing, the engine MUST be stopped (the I2S bus is one).
+      # Covers any path that restarted the engine mid-media.
+      - if:
+          condition:
+            lambda: "return id(mp_playing);"
+          then:
+            - logger.log: "mwwdiag: media playing -> engine stopped"
+            - micro_wake_word.stop:
+                id: mww
+      # Safety net for the reverse: if a media command died without ever
+      # playing (invalid URL, source down), the lock would stay true and the
+      # wake word would never come back. Unlocks here.
+      # Do NOT use `media_player.is_idle`: on_idle immediately sets the
+      # player to OFF.
+      - if:
+          condition:
+            all:
+              - lambda: "return id(mp_playing);"
+              - not:
+                  media_player.is_playing: painel_mp
+              - not:
+                  media_player.is_announcing: painel_mp
+          then:
+            - logger.log: "mwwdiag: media died without playing -> unlocking"
+            - lambda: "id(mp_playing) = false;"
+            - script.execute: {id: mww_resume}
+      # Safety net: if the engine stays stopped (failed start, or an
+      # unexpected stop), return it to listening. No guard on
+      # voice_assistant.is_running (it stays true ~1.5 min after the
+      # conversation and would block this). The normal path is on_end; this
+      # only fires if something goes wrong.
+      - if:
+          condition:
+            all:
+              - not:
+                  micro_wake_word.is_running:
+              # NEVER during a conversation: the engine grabs the I2S bus
+              # mid-response and the speaker can't start (silence). va_state
+              # == 0 means "idle".
+              - lambda: "return id(va_state) == 0;"
+              - lambda: "return !id(mp_playing);"
+          then:
+            - logger.log: "mwwdiag: engine stopped -> starting"
+            - micro_wake_word.start:
+                id: mww
+      - lambda: |-
+          ESP_LOGI("mwwdiag", "engine=%s | okay_nabu=%s",
+                   id(mww).is_running() ? "RUNNING" : "STOPPED",
+                   id(ww_okay_nabu).is_enabled() ? "on" : "OFF");
+
+# --- BATTERY -----------------------------------------------------------------
+# This board reads the battery via ADC on GPIO6 with a 1:1 divider (multiply
+# 2.0), same as the official manufacturer config (spotpear-tv_hw.yaml).
+sensor:
+  - platform: adc
+    pin: GPIO6
+    id: battery_voltage
+    name: "Battery voltage"
+    attenuation: 12db
+    update_interval: 30s
+    accuracy_decimals: 2
+    unit_of_measurement: "V"
+    icon: "mdi:battery-medium"
+    filters:
+      - multiply: 2.0
+      - median:
+          window_size: 7
+          send_every: 7
+          send_first_at: 1
+      - throttle: 1min
+
+  - platform: template
+    id: battery_percentage
+    name: "Battery"
+    unit_of_measurement: "%"
+    device_class: battery
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: |-
+      float v = id(battery_voltage).state;
+      if (isnan(v)) return NAN;
+      // Li-ion cell: 3.30 V = 0% ... 4.20 V = 100%
+      float pct = (v - 3.30f) / (4.20f - 3.30f) * 100.0f;
+      if (pct < 0.0f) pct = 0.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      return pct;
+
+  # USB voltage (GPIO7) - see the "Charger connected" binary_sensor comment.
+  # It is the only way the firmware knows the charger is plugged in.
+  - platform: adc
+    pin: GPIO7
+    id: usb_voltage
+    name: "USB voltage"
+    attenuation: 12db
+    update_interval: 30s
+    accuracy_decimals: 2
+    unit_of_measurement: "V"
+    icon: "mdi:usb"
+    filters:
+      - multiply: 1.6667   # (20K + 30K) / 30K - the R59/R61 divider
+      - median:
+          window_size: 5
+          send_every: 5
+          send_first_at: 1
+      - throttle: 1min
+
+  # Time since boot. Used to CONFIRM unexpected reboots: on 12/09 the board
+  # rebooted itself at 20:44 with no crash recorded on the next boot
+  # (suspected brownout starting the speaker). Without this there was no way
+  # to date the next one.
+  - platform: uptime
+    id: uptime_s
+    name: "Uptime"
+    type: seconds
+    update_interval: 60s
+
+# --- BUSES -------------------------------------------------------------------
+i2c:
+  - id: bus_a
+    sda: GPIO15
+    scl: GPIO14
+    scan: true
+
+spi:
+  - id: spi_bus
+    clk_pin: GPIO46
+    mosi_pin: GPIO48
+
+i2s_audio:
+  - id: i2s_audio_bus
+    i2s_lrclk_pin: GPIO45
+    i2s_bclk_pin: GPIO9
+    i2s_mclk_pin: GPIO16
+
+# --- AUDIO (2 separate codecs) -----------------------------------------------
+# Mics = ES7210 (ADC) . Speaker = ES8311 (DAC)
+audio_adc:
+  - platform: es7210
+    id: es7210_adc
+    i2c_id: bus_a
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+audio_dac:
+  - platform: es8311
+    id: es8311_dac
+    i2c_id: bus_a
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+microphone:
+  - platform: i2s_audio
+    id: box_mic
+    i2s_audio_id: i2s_audio_bus
+    i2s_din_pin: GPIO10
+    adc_type: external
+    channel: left
+    pdm: false
+    sample_rate: 16000
+    bits_per_sample: 16bit
+
+speaker:
+  - platform: i2s_audio
+    id: box_speaker
+    i2s_audio_id: i2s_audio_bus
+    i2s_dout_pin: GPIO8
+    dac_type: external
+    audio_dac: es8311_dac
+    # MUST match the es8311 codec sample_rate (16000) and the
+    # microphone/I2S bus. It was 48000 while the DAC was at 16000 -> the DAC
+    # misread the clock and "strange noise" came out of the speaker.
+    sample_rate: 16000
+    channel: mono
+
+rtttl:
+  speaker: box_speaker
+  gain: 0.5
+
+# --- MEDIA PLAYER (panel speaker) ---------------------------------------------
+# Gives HA a media_player entity to play audio on the panel speaker:
+# announcements/TTS, music, radio. Without this the speaker only exists inside
+# voice_assistant and there is no way to send it anything from outside.
+#
+# FORMAT: WAV / 16000 Hz / mono - exactly the rate the ES8311 codec and the
+# whole voice path are tuned to. Do NOT copy the manufacturer's FLAC 48 kHz
+# config: that assembly has resamplers and a 48 kHz bus; here the speaker and
+# DAC run at 16000.
+#
+# Declaring the WRONG rate here does NOT break the voice (contrary to what
+# earlier notes said). Verified in HA 2026.9.2 code
+# (components/esphome/assist_satellite.py, handle_pipeline_start): the TTS
+# format requested from the pipeline only comes from the media player when
+# the device does NOT declare the SPEAKER feature. This board has
+# `voice_assistant: speaker: box_speaker` -> `get_feature_flags()` in
+# voice_assistant.h sets FEATURE_SPEAKER and the TTS stays FIXED at
+# wav/16000/1/2 bytes. The warning would only apply if we swapped the
+# `speaker:` of voice_assistant for `media_player:` (they are mutually
+# exclusive, cv.Exclusive). Do not swap without a need.
+#
+# One pipeline (announcement_pipeline): without `media_pipeline` the component
+# enters single_pipeline_() mode and reuses the announcement format also for
+# the "default" purpose (speaker_media_player.cpp, get_traits) - i.e. EVERYTH
+# HA sends (announcement or music) is transcoded to WAV 16 kHz mono. No mixer
+# or resamplers needed: those are only required with TWO pipelines (announce +
+# media), which the component forces onto different speakers.
+media_player:
+  - platform: speaker
+    id: painel_mp
+    name: "Voice panel"
+    icon: "mdi:speaker"
+    announcement_pipeline:
+      format: WAV
+      sample_rate: 16000
+      num_channels: 1
+      speaker: box_speaker
+    # Must match the volume that on_boot puts on the speaker (75% = 0 dB on
+    # the ES8311). This component's setup runs BEFORE on_boot (-100) and
+    # writes its volume to the speaker; if it stayed at the default (50%) the
+    # value in HA would say one thing and the speaker be at another.
+    volume_initial: ${vol_default}%
+    # FLOOR: 0% is not silence - it is vol_min (the lowest that is audible).
+    # Without this the usable range was all at the top and the bottom half
+    # was dead.
+    volume_min: ${vol_min}
+    # CEILING: 100% on the control = ${vol_max} on the speaker. With 100%
+    # here, the HA card slider would fetch the ES8311's maximum gain and
+    # distort everything.
+    volume_max: ${vol_max}
+    # The trigger MUST be `on_turn_on`, not `on_play`/`on_announcement`.
+    # `on_play` only fires when the pipeline is already playing - and with the
+    # wake word engine holding the I2S bus the pipeline NEVER gets to play, so
+    # the trigger never fires and the board stays repeating "Parent bus is
+    # busy" until it seizes up. `on_turn_on` fires the instant the COMMAND
+    # arrives (speaker_media_player.cpp, watch_media_commands_: OFF -> ON and
+    # publish_state before starting the pipeline), which is early enough for
+    # the engine to release the bus. `on_idle` returns the state to OFF so the
+    # next command fires again. `on_play`/`on_announcement` stay as
+    # reinforcement (idempotent: mp_stop_wake only stops the engine if
+    # running).
+    on_turn_on:
+      - logger.log: "Media: command received -> releasing the I2S bus"
+      - script.execute: {id: mp_stop_wake}
+    on_announcement:
+      - script.execute: {id: mp_stop_wake}
+    on_play:
+      - script.execute: {id: mp_stop_wake}
+    on_idle:
+      - lambda: "id(mp_playing) = false;"
+      - script.execute: {id: mp_idle_resume}
+      # Back to OFF to rearm on_turn_on. OFF in HA is normal in this
+      # component: it does not prevent play_media/announcements (see
+      # media_player.h, USE_SPEAKER_MEDIA_PLAYER_ON_OFF).
+      - media_player.turn_off: painel_mp
+    # Volume changed on the HA CARD (or via volume_up/down): the media player
+    # already wrote the value to the speaker; here it is only mirrored to the
+    # `number`, so both controls and the screen bar say the same thing. By
+    # event (not polling) on purpose: it was the polling that created the
+    # fight where the number jumped back because the media player DISCARDS
+    # sets when its queue is full.
+    on_volume:
+      - lambda: |-
+          ESP_LOGD("mpvol", "media player: volume=%.3f (number said %.0f%%)", x, id(vol_pct));
+          id(vol_pct) = x * 100.0f;
+          id(vol_speaker).publish_state(id(vol_pct));
+
+# NOTE (v0.14.0): here used to be the "Speaker Enabled" switch (template,
+# `restore_mode: RESTORE_DEFAULT_ON`). On boot it fired `speaker.mute_off` -
+# a write on the SAME I2S bus the wake word engine and the speaker use, and it
+# only duplicated what the "Speaker volume" number already did. No HA
+# automation/card referenced it. Removed.
+
+# --- BACKLIGHT (GPIO42) - without this the panel stays off -------------------
+output:
+  - platform: ledc
+    pin: GPIO42
+    id: backlight_output
+    inverted: true
+
+light:
+  - platform: monochromatic
+    id: screen_light
+    name: "Display"
+    icon: "mdi:television"
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+# --- VOICE ASSISTANT ---------------------------------------------------------
+micro_wake_word:
+  id: mww
+  # true (ESPHome default): the engine stops as soon as it detects the wake
+  # word, which RELEASES THE I2S BUS for the speaker. Without this the engine
+  # held the bus during the conversation and the speaker failed:
+  #   [E][i2s_audio.speaker.std]: Parent bus is busy
+  #   [E][voice_assistant]: Cannot receive audio, buffer is full
+  # Who restarts it is voice_assistant's on_end (below).
+  stop_after_detection: true
+  # Models same as the manufacturer's official config for this board
+  # (Spotpear_TV.yaml). "Okay Nabu" is the one that works best with a pt-PT
+  # accent (tested on the HA app). Bare names resolve from the official repo
+  # github.com/esphome/micro-wake-word-models (models/v2/<name>.json).
+  models:
+    - model: okay_nabu
+      id: ww_okay_nabu
+      # 0.97 (model default) -> 0.90 (12/09) -> 0.93 (17/09).
+      # 0.90 was too sensitive: on 17/09, with the TV on, the panel woke up
+      # BY ITSELF twice (16:30 and 16:47) and sent TV speech to HA ("..."). The
+      # model is trained in English (trained_languages: [en]); 0.97 was too
+      # demanding for a pt-PT accent, but 0.90 fires on ambient speech. 0.93
+      # is the middle. If it starts firing on its own again, raise it (0.95)
+      # or train a custom model to your voice.
+      probability_cutoff: 0.93
+    # Only this model (17/09). Measured with the "Last wake word" sensor:
+    #   "okay nabu"   -> fires (best, own accent)
+    #   "okay hermes" -> ALSO fires, via this model (close phrase)
+    #   "hey nabu"    -> does not fire
+    #   "hey hermes"  -> does not fire (the hey_hermes EN model, miketomkins,
+    #                    v1.0.0, was tested and removed: it did not respond to
+    #                    the accent, occupied arena and had cutoff 0.32)
+    # The two wake phrases in everyday use are therefore covered by this one
+    # model. Cost: this sensitivity (0.93) also accepts TV speech -> on 17/09
+    # it fired 3x on its own. If it happens again, the right path is training
+    # a custom model (microwakeword.com), not tightening the cutoff.
+  on_wake_word_detected:
+    - logger.log:
+        format: "Wake word detected: %s"
+        args: ["wake_word.c_str()"]
+    # Leaves a trace in HA of WHICH model fired and when. The board log is not
+    # kept, so an "invisible" trigger (17/09: the panel woke itself twice with
+    # the TV on) had no evidence.
+    - text_sensor.template.publish:
+        id: ww_txt
+        state: !lambda |-
+          auto t = id(sntp_time).now();
+          char b[64];
+          if (t.is_valid()) {
+            snprintf(b, sizeof(b), "%s %02u/%02u %02u:%02u", wake_word.c_str(),
+                     t.day_of_month, t.month, t.hour, t.minute);
+          } else {
+            snprintf(b, sizeof(b), "%s", wake_word.c_str());
+          }
+          return {b};
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  microphone: box_mic
+  speaker: box_speaker
+  # Links the local wake word engine to the assistant: this is what lets HA
+  # list/pick the wake word model (without it the selects stay unavailable).
+  micro_wake_word: mww
+  use_wake_word: false
+  # IMPORTANT: must be FALSE. With true, ESPHome sends the
+  # VOICE_ASSISTANT_REQUEST_USE_WAKE_WORD flag in the request to HA, and HA
+  # then does wake word detection on the audio instead of transcribing - the
+  # pipeline ended with no STT at all. The wake word is detected locally by
+  # micro_wake_word, which calls voice_assistant.start with the wake_word.
+  noise_suppression_level: 3
+  auto_gain: 31dBFS
+  # CRITICAL for "hearing too much": the default is 300s (5 MINUTES!). In
+  # that window the board keeps accepting speech WITHOUT the wake word -
+  # catching house conversations and noise, transcribing junk and pushing it
+  # to the agent (slow). That is how TV speech ended up as a command. With 5s
+  # it only accepts an immediate follow-up and demands the wake word again.
+  # NEVER leave the default.
+  conversation_timeout: 5s
+  # 1.0 (and not 2.0). HA already applies auto_gain at 31 dBFS on the
+  # microphone audio; adding a 2x digital gain on top raised the background
+  # noise to ~40% of scale and hurt the VAD and transcription (e.g. "que horas
+  # sao" transcribed as "Que oracao!").
+  volume_multiplier: 1.0
+  on_start:
+    - logger.log: "Pipeline started"
+    - script.execute: {id: hud_set, state: 1}
+    # Releases the I2S bus for the speaker while the conversation runs.
+    - micro_wake_word.stop:
+        id: mww
+  on_listening:
+    - logger.log: "Assistant listening..."
+    - script.execute: {id: hud_set, state: 1}
+  on_stt_vad_end:
+    - script.execute: {id: hud_set, state: 2}
+  on_stt_end:
+    - logger.log: "STT finished"
+    - script.execute: {id: hud_set, state: 2}
+  on_tts_start:
+    - logger.log: "Processing response..."
+    - script.execute: {id: hud_set, state: 3}
+  on_tts_end:
+    - logger.log: "Response spoken"
+  # The on_tts_end above fires when the TTS URL is ready - NOT when the audio
+  # finished playing (there can be 30+ s between the two). The real playback
+  # state is in these two triggers.
+  on_tts_stream_start:
+    - script.execute: {id: hud_set, state: 3}
+  on_tts_stream_end:
+    # The last byte has gone out to the speaker. What returns the engine to
+    # listening AND the screen to "idle" is mww_resume, which waits for the
+    # I2S bus (the speaker click when the amplifier turns off) instead of
+    # counting a fixed time.
+    - script.execute: {id: mww_resume}
+  on_error:
+    - logger.log: "Assistant error"
+    - script.execute: {id: hud_set, state: 4}
+    - micro_wake_word.start:
+        id: mww
+  on_end:
+    - logger.log: "Conversation ended"
+    # This trigger fires when the pipeline closes - tens of seconds BEFORE
+    # the audio finishes playing. So here we neither restore the screen nor
+    # start the engine: doing so puts the engine grabbing the I2S bus mid-play
+    # and the speaker never starts - the screen said "speaking" and nothing
+    # was heard ("Cannot receive audio, buffer is full"). The normal case is
+    # handled in on_tts_stream_end. Here it stays only as the net for
+    # responses WITHOUT any speech, which never fire that trigger.
+    - delay: 2s
+    - if:
+        condition:
+          lambda: "return id(va_state) != 3;"
+        then:
+          - script.execute: {id: mww_resume}
+
+# --- DISPLAY ST7796 (mipi_spi, 480x320) ---------------------------------------
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: ST7796
+    data_rate: 40MHz
+    invert_colors: true
+    transform:
+      mirror_x: true
+      mirror_y: true
+      swap_xy: true
+    dimensions:
+      height: 320
+      width: 480
+    cs_pin: GPIO5
+    dc_pin: GPIO47
+    rotation: ${rotate_display}
+    # `never`: who triggers drawing is the `ecra_loop` script (pace from the
+    # "Animation (fps)" number). With a fixed update_interval, tuning the
+    # smoothness would cost a ~10 min compile+OTA per attempt.
+    update_interval: never
+    lambda: |-
+      it.fill(Color(0, 0, 0));
+
+      // --- time: the animation advances in degrees/second, not per frame ---
+      static uint32_t ecra_ultimo_ms = 0;
+      uint32_t ecra_agora = millis();
+      float dt = (ecra_agora - ecra_ultimo_ms) / 1000.0f;
+      ecra_ultimo_ms = ecra_agora;
+      if (dt < 0.0f || dt > 1.0f) dt = 1.0f;
+
+      // --- state: color, rotation speed and pulse --------------------------
+      // The media screen requires `est == 0`: the assistant TTS goes through
+      // this media player's announcement_pipeline (`voice_assistant: TTS
+      // stream start` -> `speaker_media_player: State changed to
+      // ANNOUNCING`), so `mp_playing` stays true during EACH spoken response
+      // and, without the guard, the screen switched to "NOW PLAYING" mid-
+      // conversation.
+      int est = id(va_state);
+      bool media = id(mp_playing) && est == 0;
+      Color cor(0x00, 0xE5, 0xFF);          // IDLE: cyan, slow
+      float vel = 9.0f, pulso = 0.0f;
+      if (media)         { cor = Color(0x1E, 0xD7, 0x60); vel = 24.0f; pulso = 0.5f; }
+      else if (est == 1) { cor = Color(0x19, 0xF0, 0xD8); vel = 30.0f; pulso = 1.0f; }
+      else if (est == 2) { cor = Color(0xFF, 0xB3, 0x00); vel = 96.0f; pulso = 0.4f; }
+      else if (est == 3) { cor = Color(0x00, 0xE5, 0xFF); vel = 42.0f; pulso = 0.8f; }
+      else if (est == 4) { cor = Color(0xFF, 0x4D, 0x5E); vel = 3.0f;  pulso = 0.0f; }
+
+      id(rot_deg) += vel * dt;
+      if (id(rot_deg) >= 36000.0f) id(rot_deg) -= 36000.0f;
+      float rot = id(rot_deg);
+
+      // --- helpers ----------------------------------------------------------
+      // ESPHome has no alpha: what was `globalAlpha` in the jarvis_ai canvas
+      // is blended here with the BLACK background before writing the pixel
+      // (same result, since the background is black).
+      auto mist = [](Color c, float a) {
+        return Color((uint8_t) (c.r * a), (uint8_t) (c.g * a), (uint8_t) (c.b * a));
+      };
+      // Ring segment between r1 and r2, from a0 to a1 degrees (0 = top,
+      // clockwise). As ~5 degree quads, 2 triangles each (no quad primitive).
+      auto seg = [&](int ccx, int ccy, float r1, float r2, float a0, float a1, Color c) {
+        int n = (int) ((a1 - a0) / 5.0f);
+        if (n < 1) n = 1;
+        for (int i = 0; i < n; i++) {
+          float s = (a0 + (a1 - a0) * i / n - 90.0f) * 0.0174533f;
+          float e = (a0 + (a1 - a0) * (i + 1) / n - 90.0f) * 0.0174533f;
+          int x1 = ccx + (int) (cosf(s) * r2), y1 = ccy + (int) (sinf(s) * r2);
+          int x2 = ccx + (int) (cosf(e) * r2), y2 = ccy + (int) (sinf(e) * r2);
+          int x3 = ccx + (int) (cosf(e) * r1), y3 = ccy + (int) (sinf(e) * r1);
+          int x4 = ccx + (int) (cosf(s) * r1), y4 = ccy + (int) (sinf(s) * r1);
+          it.filled_triangle(x1, y1, x2, y2, x3, y3, c);
+          it.filled_triangle(x1, y1, x3, y3, x4, y4, c);
+        }
+      };
+      // Dashed ring: dash/gap in arc pixels, `off` shifts the pattern - this
+      // is what makes the rotation (there is no dashed-arc primitive).
+      auto tracejado = [&](int ccx, int ccy, float r, float w, Color c, float dash, float gap, float off) {
+        float circ = 6.2831853f * r;
+        float per = dash + gap;
+        float px = -fmodf(off, per);
+        if (px > 0.0f) px -= per;
+        while (px < circ) {
+          float d0 = px > 0.0f ? px : 0.0f;
+          float d1 = (px + dash) < circ ? (px + dash) : circ;
+          if (d1 > d0) {
+            seg(ccx, ccy, r - w * 0.5f, r + w * 0.5f, d0 / circ * 360.0f, d1 / circ * 360.0f, c);
+          }
+          px += per;
+        }
+      };
+      // The ring: solid outer + 3 rotating dashes + 60 radial ticks + core.
+      // Radii from the original canvas, relative to `base`.
+      auto reactor = [&](int ccx, int ccy, float base, Color c, float pulso) {
+        float b = base * (1.0f + 0.012f * (1.0f + pulso * 3.0f) * sinf(ecra_agora / 300.0f));
+        it.filled_ring(ccx, ccy, (int) (b - 1.5f), (int) (b + 1.5f), mist(c, 0.90f));
+        tracejado(ccx, ccy, b * 0.86f, 2.0f, mist(c, 0.45f), 40.0f, 18.0f, rot * 2.0f);
+        tracejado(ccx, ccy, b * 0.72f, 5.0f, mist(c, 0.25f), 4.0f, 10.0f, -rot * 3.0f);
+        tracejado(ccx, ccy, b * 0.58f, 2.0f, mist(c, 0.60f), 90.0f, 40.0f, rot * 1.2f);
+        for (int i = 0; i < 60; i++) {
+          float a = (i / 60.0f) * 6.2831853f + rot / 180.0f;
+          float r1 = b * 1.06f, r2 = b * (i % 5 == 0 ? 1.12f : 1.09f);
+          it.line(ccx + (int) (cosf(a) * r1), ccy + (int) (sinf(a) * r1),
+                  ccx + (int) (cosf(a) * r2), ccy + (int) (sinf(a) * r2),
+                  mist(c, i % 5 == 0 ? 0.80f : 0.30f));
+        }
+        // Core: no radial gradient or blur in ESPHome - approximated with
+        // concentric circles, largest/dimmest to smallest/brightest.
+        for (int i = 0; i < 10; i++) {
+          float f = i / 10.0f;
+          it.filled_circle(ccx, ccy, (int) (b * 0.42f * (1.0f - f)),
+                           mist(c, 0.05f + 0.30f * powf(f, 1.6f)));
+        }
+      };
+
+      // --- top: day of week + clock -----------------------------------------
+      // The day of week occupies the spot where the panel name was and the
+      // date where the IP was (diagnostic - the IP stays visible in HA).
+      auto agora_t = id(sntp_time).now();
+      if (agora_t.is_valid()) {
+        // ESPTime.day_of_week: sunday = 1 .. saturday = 7 (esphome/core/time.h)
+        static const char *DAYS[] = {"Sunday", "Monday", "Tuesday", "Wednesday",
+                                     "Thursday", "Friday", "Saturday"};
+        int dow = agora_t.day_of_week;
+        // Day, hour and date with the SAME font and color: the footer lifts
+        // to 292 because font_normal (24 px) occupies 292..316 - at 298 the
+        // text would be cut off by the screen bottom (320 px).
+        if (dow >= 1 && dow <= 7) {
+          it.print(10, 6, id(font_normal), Color(210, 210, 210), TextAlign::TOP_LEFT, DAYS[dow - 1]);
+        }
+        it.strftime(470, 6, id(font_normal), Color(210, 210, 210), TextAlign::TOP_RIGHT, "%H:%M", agora_t);
+        it.strftime(10, 292, id(font_normal), Color(210, 210, 210), TextAlign::TOP_LEFT, "%d-%m-%Y", agora_t);
+      }
+
+      if (media) {
+        // --- MEDIA SCREEN: the ring shows the VOLUME ------------------------
+        int ccx = 130, ccy = 160;
+        float base = 92.0f;
+        float v = id(vol_pct);
+        if (v < 0.0f) v = 0.0f;
+        if (v > 100.0f) v = 100.0f;
+        reactor(ccx, ccy, base, cor, 0.5f);
+        // Solid volume arc over the ring (0 = top, clockwise).
+        seg(ccx, ccy, base * 0.86f - 3.0f, base * 0.86f + 3.0f, 0.0f, 360.0f * v / 100.0f,
+            Color(0x3C, 0xFF, 0x8C));
+        it.printf(ccx, ccy, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (v + 0.5f));
+        // Right column: state, title (written by HA) and volume.
+        it.print(258, 78, id(font_normal), Color(0x1E, 0xD7, 0x60), TextAlign::TOP_LEFT, "NOW PLAYING");
+        std::string titulo = id(mp_titulo).state;
+        if (titulo.empty()) titulo = "Radio / Music";
+        if (titulo.size() > 18) titulo = titulo.substr(0, 17) + ".";
+        it.print(258, 118, id(font_normal), Color(255, 255, 255), TextAlign::TOP_LEFT, titulo.c_str());
+        it.printf(258, 156, id(font_small), Color(150, 150, 150), TextAlign::TOP_LEFT, "volume %d%%", (int) (v + 0.5f));
+        it.rectangle(258, 186, 200, 10, Color(60, 60, 60));
+        it.filled_rectangle(259, 187, (int) (198 * v / 100.0f), 8, Color(0x1E, 0xD7, 0x60));
+      } else {
+        // --- VOICE HUD: the state ring --------------------------------------
+        reactor(240, 152, 118.0f, cor, pulso);
+        // Volume notice for 1.5 s after a button click: without this a click
+        // to change the volume gave NO feedback when nothing was playing
+        // (with media, the media screen already shows the volume).
+        if (millis() < id(vol_aviso_ms)) {
+          float vv = id(vol_pct);
+          if (vv < 0.0f) vv = 0.0f;
+          if (vv > 100.0f) vv = 100.0f;
+          it.printf(240, 152, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (vv + 0.5f));
+        } else {
+          const char *stxt = "IDLE";
+          if (est == 1)      stxt = "LISTENING";
+          else if (est == 2) stxt = "THINKING";
+          else if (est == 3) stxt = "SPEAKING";
+          else if (est == 4) stxt = "ERROR";
+          it.print(240, 152, id(font_normal), cor, TextAlign::CENTER, stxt);
+        }
+      }
+
+      // --- footer: battery (the date is in the bottom-left corner) ----------
+      float bat = id(battery_percentage).state;
+      if (!isnan(bat)) {
+        it.printf(470, 292, id(font_normal), Color(210, 210, 210), TextAlign::TOP_RIGHT, "%.0f%%", bat);
+      }
+
+# NOTE (12/09): this board revision has NO touchscreen - the GT911 does not
+# exist / does not respond and the manufacturer's official config does not
+# define it either. Block removed. If touch hardware is ever confirmed, the
+# block was:
+#   touchscreen: [{platform: gt911, i2c_id: bus_a, address: 0x5D|0x14, display: main_display}]
+
+# --- CAMERA (GC0308/OV5640, auto-detected) - DISABLED ------------------------
+# Pins from the manufacturer's official file (spotpear-tv_hw.yaml).
+# GPIO3 is a strapping pin but is used here as D5 (confirmed in the official).
+# --- CAMERA (removed on request) ----------------------------------------------
+# Not useful as a motion sensor: the board has no IR LED (sees nothing at
+# night) and ESPHome does not do image-based motion detection anyway. Keeping
+# it cost 12 KB RAM, 65 KB flash and ~1.2 MB PSRAM. To restore: uncomment
+# this block.
+# esp32_camera:
+#   id: lcd_camera
+#   name: "Camera"
+#   icon: "mdi:camera"
+#   external_clock:
+#     pin: GPIO41
+#     frequency: 20MHz
+#   i2c_id: bus_a
+#   data_pins:
+#     - GPIO12
+#     - GPIO4
+#     - GPIO11
+#     - GPIO17
+#     - GPIO18
+#     - GPIO3
+#     - GPIO1
+#     - GPIO2
+#   vsync_pin: GPIO39
+#   href_pin: GPIO40
+#   pixel_clock_pin: GPIO38
+#   resolution: 640x480
+#   jpeg_quality: 10
+#   max_framerate: 10fps
+#   idle_framerate: 0.1fps
+#   frame_buffer_count: 2
+#   frame_buffer_location: PSRAM
+#   # This sensor (GC0308) is very weak in low light - pull gain/exposure up.
+#   brightness: 2
+#   contrast: 0
+#   aec2: true
+#   ae_level: 2
+#   agc_gain_ceiling: 32X
+#
+# NOTE: the microSD card is NOT configured in this firmware (the `spi:` block
+# has only clk/mosi for the display, no SD slot). SD video/music playback are
+# features of the original XiaoZhi firmware and do not exist here. See
+# docs/disabled-features.md.
+
+# --- TIME --------------------------------------------------------------------
+time:
+  - platform: sntp
+    id: sntp_time
+
+# --- FONTS -------------------------------------------------------------------
+font:
+  - file: "gfonts://Roboto"
+    id: font_big
+    size: 56
+    glyphs: " ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+  - file: "gfonts://Roboto"
+    id: font_normal
+    size: 24
+    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
+  # Big numbers: the % volume inside the ring, on the media screen.
+  - file: "gfonts://Roboto"
+    id: font_med
+    size: 40
+    glyphs: "0123456789%"
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 16
+    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
+
+# --- STATE SENSORS -----------------------------------------------------------
+debug:
+  update_interval: 60s
+
+text_sensor:
+  # Diagnostics: why it rebooted the last time (brownout / watchdog / panic /
+  # software). Added to investigate the 2026.9.0 build reboots.
+  - platform: debug
+    reset_reason:
+      name: "Last reset reason"
+      entity_category: diagnostic
+  - platform: template
+    name: "Uptime (text)"
+    id: uptime_txt
+    icon: "mdi:timer-outline"
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      uint32_t s = (uint32_t) id(uptime_s).state;
+      char b[32];
+      snprintf(b, sizeof(b), "%ud %02uh %02um", s / 86400u, (s % 86400u) / 3600u, (s % 3600u) / 60u);
+      return {b};
+
+  - platform: template
+    name: "Assistant state"
+    id: va_state_text
+    update_interval: 5s
+    lambda: |-
+      if (id(va).is_running()) return {"listening/speaking"};
+      return {"ready"};
+
+  # Last wake word trigger (model + time), written by the
+  # `on_wake_word_detected` of micro_wake_word. Exists only for diagnostics:
+  # the board log is not kept and without this there is no evidence of when /
+  # who woke the panel (17/09: it woke itself twice with the TV on).
+  - platform: template
+    name: "Last wake word"
+    id: ww_txt
+    icon: "mdi:microphone-message"
+    entity_category: diagnostic
+    update_interval: never
+    lambda: return {""};

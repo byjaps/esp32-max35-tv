@@ -1,0 +1,14 @@
+# --- Secrets: never commit these ---
+secrets.yaml
+
+# --- ESPHome build artefacts ---
+.esphome/
+__pycache__/
+*.pyc
+
+# --- Venvs (in case you build locally) ---
+.venv/
+.venv*/
+
+# --- OS ---
+.DS_Store
