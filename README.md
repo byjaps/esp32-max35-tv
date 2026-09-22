@@ -79,7 +79,32 @@ to re-enable:
 firmware yourself needs ESPHome **2026.9.0** (Python 3.12+); flashing a pre-built
 binary needs no build tools at all.
 
-### Option A — flash a pre-built binary (no build tools)
+### Easiest — hand it to your Hermes agent
+
+If you already run **[Hermes Agent](https://github.com/NousResearch/hermes-agent)**
+(or any agent with shell access and your Home Assistant credentials), you don't
+have to do any of the steps below by hand: give it this repository and let it
+configure the panel. It can clone the repo, create `secrets.yaml` (generating the
+`api_encryption_key`), adjust the device name, compile with ESPHome and push the
+OTA over the network — and then confirm on the board which version is actually
+running instead of trusting the upload.
+
+Something like this is enough:
+
+> Clone `https://github.com/byjaps/esp32-max35-tv` and set up the MAX35-TV voice
+> panel for my Home Assistant. Build with ESPHome 2026.9.0, create the secrets
+> file, flash it over the network, then confirm on the device which firmware
+> version is really running.
+
+The repo is built for that: the YAML is self-contained (no hard-coded network,
+names or secrets), `scripts/` speaks both the ESPHome API and HA, and
+[`docs/troubleshooting.md`](docs/troubleshooting.md) hands the agent the honest
+checks (what firmware is really running, why the I2S bus gets busy, why the first
+flashes reboot).
+
+### Or by hand — two ways
+
+#### Option A — flash a pre-built binary (no build tools)
 
 Grab the files from the [**latest release**](https://github.com/byjaps/esp32-max35-tv/releases/latest):
 
@@ -88,10 +113,10 @@ Grab the files from the [**latest release**](https://github.com/byjaps/esp32-max
 | `max35tv-v0.15.1-2026.9.0-ota.bin` | the panel already runs ESPHome and has WiFi | OTA — `esphome upload`, or ESPHome Web |
 | `max35tv-v0.15.1-2026.9.0-factory.bin` | first flash, over the cable (replaces XiaoZhi) | `esptool ... write-flash 0x0` at offset `0x0` |
 
-Then jump to step 4 below (Home Assistant side). The `2026.8.2` build ships in the
+Then jump to the Home Assistant side below. The `2026.8.2` build ships in the
 same release as a fallback.
 
-### Option B — build and flash it yourself
+#### Option B — build and flash it yourself
 
 1. **Flash ESPHome** onto the board (original firmware is XiaoZhi). See
    [`docs/setup-hermes.md`](docs/setup-hermes.md).
