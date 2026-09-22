@@ -13,10 +13,11 @@ repository; the "brain" is Hermes via
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/byjaps/esp32-max35-tv)](https://github.com/byjaps/esp32-max35-tv)
+[![Release](https://img.shields.io/github/v/release/byjaps/esp32-max35-tv?label=release&color=blue)](https://github.com/byjaps/esp32-max35-tv/releases/latest)
 [![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0-green.svg)](https://esphome.io)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](hardware/README.md)
 [![HA Role](https://img.shields.io/badge/Home%20Assistant-Conversation%20Agent-blueviolet.svg)](hermes/README.md)
-[![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](#)
+[![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](docs/troubleshooting.md)
 
 ## Features
 
@@ -74,17 +75,41 @@ to re-enable:
 
 ## Getting started
 
+**You need**: Home Assistant (with an Assist pipeline) and this panel. Building the
+firmware yourself needs ESPHome **2026.9.0** (Python 3.12+); flashing a pre-built
+binary needs no build tools at all.
+
+### Option A — flash a pre-built binary (no build tools)
+
+Grab the files from the [**latest release**](https://github.com/byjaps/esp32-max35-tv/releases/latest):
+
+| File | When to use it | How |
+|---|---|---|
+| `max35tv-v0.15.1-2026.9.0-ota.bin` | the panel already runs ESPHome and has WiFi | OTA — `esphome upload`, or ESPHome Web |
+| `max35tv-v0.15.1-2026.9.0-factory.bin` | first flash, over the cable (replaces XiaoZhi) | `esptool ... write-flash 0x0` at offset `0x0` |
+
+Then jump to step 4 below (Home Assistant side). The `2026.8.2` build ships in the
+same release as a fallback.
+
+### Option B — build and flash it yourself
+
 1. **Flash ESPHome** onto the board (original firmware is XiaoZhi). See
    [`docs/setup-hermes.md`](docs/setup-hermes.md).
-2. **Install the HA integration** (Hermes as Conversation Agent) —
+2. **Configure** `secrets.yaml` (copy `secrets.yaml.example`) and adjust names.
+3. **Compile + OTA** the YAML: `esphome run esp32-max35-tv.yaml`.
+
+### Either way — Home Assistant side
+
+4. **Install the HA integration** (Hermes as Conversation Agent) —
    [`hermes/`](hermes/README.md).
-3. **Configure** `secrets.yaml` (copy `secrets.yaml.example`) and adjust names.
-4. **Compile + OTA** the YAML.
-5. Set up the Assist pipeline to use Hermes as its conversation agent.
+5. Set up the Assist pipeline to use Hermes as its conversation agent, and select
+   the panel as the satellite that uses that pipeline.
 
 > ✅ **Builds and runs on ESPHome 2026.9.0** (the current release). The board
 > runs it stable for hours. Validate any change with `esphome config` before
-> flashing.
+> flashing. After any flash the panel may reboot 2–3 times in the first ~45 min
+> while the new image settles — that is expected, not a defect
+> ([`docs/troubleshooting.md`](docs/troubleshooting.md)).
 
 ## Repository layout
 
@@ -111,7 +136,7 @@ This project stands on the shoulders of several people:
 - **Spotpear** — the board, the official wiki and the hardware documentation.
 - **[`RealDeco/xiaozhi-esphome`](https://github.com/RealDeco/xiaozhi-esphome)** —
   the reference ESPHome config for this board (pins, codecs, wake word).
-- **[`edamin2/jarvis_ai`](https://github.com/edamin2/jarvis_ai)** — the HUD
+- **[`eadmin2/jarvis_ai`](https://github.com/eadmin2/jarvis_ai)** — the HUD
   "arc reactor" animation, ported from its canvas to the ESPHome display.
 - **[`miketomkins`](https://github.com/miketomkins/hey-hermes-wakeword-model)** —
   the "hey hermes" wake word model (tested, not retained; see `docs/wake-word.md`).

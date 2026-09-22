@@ -6,7 +6,7 @@ local `secrets.yaml` (kept out of git). Nothing is hard-coded to a personal
 network or to Home Assistant.
 
 Environment variables:
-  PANEL_HOST   ESPHome panel IP or hostname (e.g. 192.168.1.50 or panel.local)
+  PANEL_HOST   ESPHome panel IP or hostname (e.g. panel.local)
   PANEL_API_KEY  the ESPHome `api: encryption: key` (from secrets.yaml)
   HA_URL       Home Assistant base URL, e.g. http://homeassistant.local:8123
   HA_TOKEN     Home Assistant long-lived access token

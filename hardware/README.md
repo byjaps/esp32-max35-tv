@@ -21,6 +21,7 @@ The board is the **Spotpear ESP32-S3 MAX35-TV** (`ESP32S3-MAX35-TV-W`).
 | `ESP32S3-3.5inch-AI.step` | 3D board model (STEP) — [official link](https://cdn.static.spotpear.com/uploads/picture/learn/ESP32/ESP32S3-MAX35-Only-Board/ESP32S3-3.5inch-AI.step) |
 | `OV5640` / `GC0308` camera model PDFs | Camera module specs — [link](https://cdn.static.spotpear.com/uploads/picture/learn/ESP32/ESP32S3-MAX35-Only-Board/OV5640camera%20model%20.pdf) |
 | Factory firmware | `ESP32S3-MAX35-TV-EN.bin` (16 MB, offset 0x0) + `flash_download_tool-2.zip` — [wiki](https://spotpear.com/wiki/ESP32-S3-3.5-inch-LCD-TV-Display-Deepseek.html) |
+| This project's ESPHome firmware | `max35tv-v0.15.1-2026.9.0-ota.bin` / `-factory.bin` — [latest release](https://github.com/byjaps/esp32-max35-tv/releases/latest) |
 
 ## Buying
 

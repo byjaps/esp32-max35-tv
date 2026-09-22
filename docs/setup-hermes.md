@@ -8,7 +8,15 @@ the USB-serial port). Recommended laptop workflow:
 
 1. **Dump the original flash first** (to preserve XiaoZhi):
    `esptool.py read_flash 0 0x400000 xiaozhi-original-4MB.bin`
-2. Flash the factory firmware through ESPHome Web.
+2. Flash the factory image. Either **compile your own** (`esphome compile
+   esp32-max35-tv.yaml` → `.esphome/build/<name>/build/firmware.factory.bin`)
+   or **download the pre-built one** —
+   [`max35tv-v0.15.1-2026.9.0-factory.bin`](https://github.com/byjaps/esp32-max35-tv/releases/latest)
+   — and write it over the cable:
+
+   ```bash
+   esptool.py --chip esp32s3 --port /dev/ttyACM0 write-flash 0x0 max35tv-v0.15.1-2026.9.0-factory.bin
+   ```
 3. The board joins your WiFi and connects to HA.
 
 > ⚠️ **Power the board from a powered USB hub, never a bare laptop USB port.**
@@ -24,6 +32,11 @@ again. From the directory holding your `secrets.yaml` and this YAML:
 ```bash
 esphome run esp32-max35-tv.yaml
 ```
+
+No toolchain on hand? The release also ships a ready-to-flash OTA image
+([`max35tv-v0.15.1-2026.9.0-ota.bin`](https://github.com/byjaps/esp32-max35-tv/releases/latest)):
+upload it with `esphome upload` or the **ESPHome** add-on/Web dashboard — same
+result, no local build.
 
 > ✅ **ESPHome 2026.9.0 is the current, supported build** — the board runs it
 > stable (see `troubleshooting.md`). Validate first: `esphome config`.
@@ -45,17 +58,20 @@ With that in place:
 
 ## 4. Entities you get
 
-Key entities from this firmware (names in the YAML):
+Key entities from this firmware (names in the YAML — the `object_id` follows the
+`name:` you give the device, so `<board>` below is `esp32_max35_tv` if you keep
+the defaults):
 
 | Entity | Description |
 |---|---|
-| `media_player.esp32_max35_tv` | panel speaker — announcements, TTS, radio |
-| `number.esp32_max35_tv_speaker_volume` | the one source of truth for volume |
-| `sensor.esp32_max35_tv_battery` | battery % |
-| `binary_sensor.esp32_max35_tv_charger_connected` | charger status |
-| `text.esp32_max35_tv_media_title` | what is playing (written by HA) |
-| `text_sensor.esp32_max35_tv_last_wake_word` | diagnostics |
-| `text_sensor.esp32_max35_tv_last_reset_reason` | diagnostics |
+| `media_player.<board>` | panel speaker — announcements, TTS, radio |
+| `number.<board>_speaker_volume` | the one source of truth for volume |
+| `sensor.<board>_battery` | battery % |
+| `binary_sensor.<board>_charger_connected` | charger status |
+| `text.<board>_media_title` | what is playing (written by HA) |
+| `text_sensor.<board>_firmware_version` | firmware + ESPHome version (diagnostics) |
+| `text_sensor.<board>_last_wake_word` | diagnostics — which model fired, when |
+| `text_sensor.<board>_last_reset_reason` | diagnostics — software/watchdog/brownout/panic |
 
 ## 5. TTS announcements from HA (`tts.speak`)
 

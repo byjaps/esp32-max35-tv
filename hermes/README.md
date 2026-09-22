@@ -30,8 +30,12 @@ MAX35-TV (ESPHome, this repo)
 Follow the author's README. In short:
 
 ```bash
-python3 -m pip install --upgrade "hermes-voice-ha-integration @ git+https://github.com/rusty4444/hermes-voice-ha-integration.git@v0.0.12"
+python3 -m pip install --upgrade "hermes-voice-ha-integration @ git+https://github.com/rusty4444/hermes-voice-ha-integration.git@v0.0.14"
 ```
+
+(v0.0.14 is the current release — check the author's
+[releases](https://github.com/rusty4444/hermes-voice-ha-integration/releases) for
+anything newer; the two `byjaps` PRs below are included from v0.0.14 on.)
 
 or install via HACS in Home Assistant. Then configure Hermes's WebSocket URL /
 token so HA reaches Hermes, enable the `home_assistant` and `voice_stack`
