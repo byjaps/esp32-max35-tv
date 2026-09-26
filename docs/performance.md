@@ -24,9 +24,9 @@ records when the state last changed (`va_estado_ms`) and forces the state back t
 
 | State | Limit |
 |---|---|
-| listening | 30 s |
+| listening | 45 s |
 | thinking | 180 s |
-| speaking | 60 s |
+| speaking | 90 s |
 | error | 15 s |
 
 It never cuts in while the speaker is playing or announcing, and on recovery it
@@ -73,10 +73,10 @@ changed (the agent is the Hermes Agent CLI, invoked per voice turn):
 | `minimal` | 18.0 s | 4 tool round-trips |
 | `none` | 8.7 s | 2 calls — **but** the model started bailing out with "didn't get that" on data questions instead of calling tools (`out=5` tokens, no tool call) |
 
-So voice runs at **`minimal`** plus **`--max-turns 4`** (it was 8, which is how a
-light that does not exist produced a 40 s timeout: eight failing round-trips in a
-row). `none` is faster but loses answers — do not use it for questions that need
-a tool.
+So the recommendation for voice turns is **`minimal`** plus **`--max-turns 4`**
+(it was 8, which is how a light that does not exist produced a 40 s timeout: eight
+failing round-trips in a row). `none` is faster but loses answers — do not use it
+for questions that need a tool.
 
 **And one real bug on the tool side:** the "is it going to rain?" question came
 back in 20 s with "didn't get that", because the weather service was called
