@@ -1,5 +1,5 @@
 # =============================================================================
-# ESP32-S3 MAX35-TV (Spotpear) - Hermes Voice Assistant + HUD  [v0.15.1]
+# ESP32-S3 MAX35-TV (Spotpear) - Hermes Voice Assistant + HUD  [v0.15.3]
 #
 # Turn the Spotpear ESP32-S3 MAX35-TV into a local voice assistant for Hermes
 # Agent, running as a Home Assistant Assist satellite. Wake word / push-to-talk
@@ -19,6 +19,9 @@
 #   v0.15.0 (20/09) button gestures: short=single click (volume +10%), double
 #                   click (volume -10%), >=600ms press (push-to-talk)
 #   v0.15.1 (20/09) "Last reset reason" sensor (diagnose the 2026.9.0 reboots)
+#   v0.15.3 (25/09) custom "ok hermes" wake word model as a 2nd model (enabled
+#                   explicitly: ESPHome only enables the first one by default)
+#                   + voice state watchdog that recovers a stuck va_state
 #
 # Build/version note: compiled with ESPHome 2026.8.2 ON PURPOSE. The same code
 # compiled with 2026.9.0 rebooted the board every ~60s (seen in log: uptime
@@ -47,6 +50,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # initial volume, in % of the UI scale
+  fw_version: "0.15.3"   # firmware version (project.version + HA sensor)
 
 esphome:
   name: ${name}
@@ -55,7 +59,7 @@ esphome:
   min_version: 2026.8.0
   project:
     name: hermes.max35-tv
-    version: "0.15.1"
+    version: "${fw_version}"
   # The `speaker` component starts with volume 1.0, which writes 0xFF to the
   # ES8311 volume register = MAXIMUM GAIN. The ES8311 driver wants 0xBF
   # (0 dB) - 0xFF is far above and the signal SATURATES. Exact symptom: music
@@ -246,6 +250,18 @@ globals:
     type: int
     restore_value: no
     initial_value: "0"
+  # Instant (millis) of the last va_state CHANGE. This is what the state
+  # watchdog uses to know how long the board has been stuck in a voice state
+  # (see the 2 s interval). Without it only the symptom was visible: the
+  # screen stuck on "listening"/"speaking" forever, with the wake word engine
+  # stopped, because the engine guard requires va_state == 0 - seen 25/09,
+  # stuck for 3 min 15 s until the board was power-cycled (the HA side had
+  # already finished; the pipeline closed without firing on_tts_stream_end
+  # nor on_end).
+  - id: va_estado_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
   # Not decorative: this is the lock that stops the wake word engine from
   # grabbing the I2S bus while media is playing. With the engine running, the
   # speaker does
@@ -334,6 +350,17 @@ script:
     mode: restart
     then:
       - delay: 1s
+      # WHY THIS IS NEEDED: ESPHome enables ONLY THE FIRST model of the list by
+      # default (`default_enabled = i == 0` in micro_wake_word/__init__.py) and
+      # then persists that state to flash (NVS, key = hash of the id). The
+      # ok_hermes model, being the 2nd one, was born DISABLED - measured in the
+      # panel log:
+      #   [I][mwwdiag]: engine=RUNNING | okay_nabu=on | ok_hermes=OFF
+      # Do not depend on the list order nor on whatever is left in flash: they
+      # are enabled here, every time the engine returns to listening (boot
+      # included).
+      - micro_wake_word.enable_model: {id: ww_ok_hermes}
+      - micro_wake_word.enable_model: {id: ww_okay_nabu}
       - repeat:
           count: 15
           then:
@@ -543,6 +570,54 @@ interval:
                 id: painel_mp
                 volume: !lambda "return id(vol_pct) / 100.0f;"
 
+      # (4) VOICE STATE WATCHDOG - va_state can get STUCK.
+      #     Measured on 25/09: after several wake word tests in a row the
+      #     screen stayed on "listening" and never left it; the HA side had
+      #     finished fine (satellite idle, media off) but the firmware never
+      #     received on_tts_stream_end nor on_end, so:
+      #       - the screen stayed on "listening"/"speaking" forever;
+      #       - the 60 s guard NEVER returned the engine to listening, because
+      #         it requires va_state == 0 -> the panel was DEAF until the
+      #         supply was cut (3 min 15 s).
+      #     Here the instant of every state change is stamped...
+      - lambda: |-
+          static int prev_state = -1;
+          if (id(va_state) != prev_state) {
+            prev_state = id(va_state);
+            id(va_estado_ms) = millis();
+          }
+      #     ...and "idle" is restored when a state holds for too long WITHOUT
+      #     anything playing. Limits per state (never below the legitimate
+      #     duration of the phase: a reply can take tens of seconds):
+      #       1 = listening -> 45 s  (the listening phase is short)
+      #       2 = thinking  -> 180 s (the voice plugin waits up to 140 s)
+      #       3 = speaking  -> 90 s  (with media playing this never fires)
+      #       4 = error     -> 15 s  (visual notice; the board must recover)
+      - if:
+          condition:
+            all:
+              - lambda: "return id(va_state) != 0;"
+              - lambda: |-
+                  uint32_t limit = (id(va_state) == 1) ? 45000
+                                 : (id(va_state) == 2) ? 180000
+                                 : (id(va_state) == 4) ? 15000 : 90000;
+                  return (millis() - id(va_estado_ms)) > limit;
+              # With media PLAYING (or announcing) none of this applies: that
+              # is a legitimate phase and touching the engine now would grab
+              # the I2S bus.
+              - not:
+                  media_player.is_playing: painel_mp
+              - not:
+                  media_player.is_announcing: painel_mp
+          then:
+            - logger.log: "va_state stuck -> resetting to idle and the engine to listening"
+            - lambda: |-
+                ESP_LOGW("vaguard", "state %d stuck for %u ms -> 0",
+                         id(va_state), (unsigned) (millis() - id(va_estado_ms)));
+                id(va_state) = 0;
+            - script.execute: {id: hud_set, state: 0}
+            - script.execute: {id: mww_resume}
+
   - interval: 60s
     then:
       # If media is playing, the engine MUST be stopped (the I2S bus is one).
@@ -591,9 +666,27 @@ interval:
             - micro_wake_word.start:
                 id: mww
       - lambda: |-
-          ESP_LOGI("mwwdiag", "engine=%s | okay_nabu=%s",
+          ESP_LOGI("mwwdiag", "engine=%s | okay_nabu=%s | ok_hermes=%s | va_state=%d (%u ms)",
                    id(mww).is_running() ? "RUNNING" : "STOPPED",
-                   id(ww_okay_nabu).is_enabled() ? "on" : "OFF");
+                   id(ww_okay_nabu).is_enabled() ? "on" : "OFF",
+                   id(ww_ok_hermes).is_enabled() ? "on" : "OFF",
+                   id(va_state), (unsigned) (millis() - id(va_estado_ms)));
+      # Safety net: HA has the power to disable them ALL
+      # (`VoiceAssistant::on_set_configuration()` disables every model and
+      # only re-enables the ids its list contains - and its list here is
+      # empty: the "Wake word" selects show only no_wake_word). If any shows
+      # up disabled, enable it again.
+      - if:
+          condition:
+            or:
+              - not:
+                  micro_wake_word.model_is_enabled: {id: ww_ok_hermes}
+              - not:
+                  micro_wake_word.model_is_enabled: {id: ww_okay_nabu}
+          then:
+            - logger.log: "mwwdiag: model disabled from outside -> re-enabling"
+            - micro_wake_word.enable_model: {id: ww_ok_hermes}
+            - micro_wake_word.enable_model: {id: ww_okay_nabu}
 
 # --- BATTERY -----------------------------------------------------------------
 # This board reads the battery via ADC on GPIO6 with a 1:1 divider (multiply
@@ -857,17 +950,40 @@ micro_wake_word:
       # is the middle. If it starts firing on its own again, raise it (0.95)
       # or train a custom model to your voice.
       probability_cutoff: 0.93
-    # Only this model (17/09). Measured with the "Last wake word" sensor:
-    #   "okay nabu"   -> fires (best, own accent)
-    #   "okay hermes" -> ALSO fires, via this model (close phrase)
-    #   "hey nabu"    -> does not fire
-    #   "hey hermes"  -> does not fire (the hey_hermes EN model, miketomkins,
-    #                    v1.0.0, was tested and removed: it did not respond to
-    #                    the accent, occupied arena and had cutoff 0.32)
-    # The two wake phrases in everyday use are therefore covered by this one
-    # model. Cost: this sensitivity (0.93) also accepts TV speech -> on 17/09
-    # it fired 3x on its own. If it happens again, the right path is training
-    # a custom model (microwakeword.com), not tightening the cutoff.
+    # --- CUSTOM "Ok Hermes" MODEL (25/09) ----------------------------------
+    # Model trained in pt on microwakeword.com. Local files, in the models/
+    # folder: the `.json` is the manifest and points at `./ok_hermes.tflite`
+    # (it must sit next to it, with this name). Verified before installing:
+    # TFLite INT8 with input [1,3,40] and output [1,1] - the microWakeWord v2
+    # signature, the ONLY family that runs on this board (no
+    # `.pmdl`/`.onnx`/ESP-SR).
+    # It sits ALONGSIDE okay_nabu: this is the dedicated model, the other one
+    # (0.93) also fires on "okay hermes" and serves as a safety net.
+    - model: models/ok_hermes.json
+      id: ww_ok_hermes
+      # 0.50 = the value delivered by the training. Do NOT change it before
+      # measuring with the "Last wake word" sensor (it reports the model and
+      # the time of every trigger). Raise it if the panel wakes on its own
+      # with the TV/ambient speech - with okay_nabu at 0.90 that happened 3x
+      # on 17/09, and at 0.93 it stopped.
+      probability_cutoff: 0.5
+    # --- WHAT THE TWO MODELS TOGETHER CATCH (measured) -----------------------
+    # With both models loaded, four phrasings wake the panel:
+    #   "okay nabu"    -> okay_nabu
+    #   "ok hermes"    -> ok_hermes
+    #   "okay hermes"  -> either one (the phrases overlap; whichever scores first)
+    #   "hey nabu" / "hey hermes" -> also works now, which it did NOT with
+    #                    okay_nabu alone: the earlier attempt was a second
+    #                    ENGLISH model (miketomkins hey_hermes v1.0.0), which
+    #                    ignored the pt-PT accent, occupied tensor arena and
+    #                    needed cutoff 0.32 - it was removed on 17/09.
+    #                    What made the difference was a model trained IN
+    #                    PORTUGUESE, not a looser cutoff.
+    # Which model fired is logged in HA by the "Last wake word" sensor, so this
+    # table is measured, never assumed.
+    # Cost of the sensitivity: okay_nabu at 0.93 also accepts TV speech - it
+    # fired 3x on its own on 17/09. If that returns, train another custom model
+    # (microwakeword.com), do not tighten the cutoff.
   on_wake_word_detected:
     - logger.log:
         format: "Wake word detected: %s"

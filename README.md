@@ -21,8 +21,10 @@ repository; the "brain" is Hermes via
 
 ## Features
 
-- **Voice**: wake word (okay nabu) or push-to-talk (BOOT button ≥600 ms),
-  local STT, Hermes answers and the panel speaks back.
+- **Voice**: **two wake words running side by side** (official `okay nabu` + a
+  custom pt-trained `ok hermes`) — four phrasings wake it in practice — or
+  push-to-talk (BOOT button ≥600 ms), local STT, Hermes answers and the panel
+  speaks back.
 - **HUD**: animated "arc reactor" state ring on the display — color + speed per
   state (idle/listening/thinking/speaking/error), clock + day upstream,
   battery footer.
@@ -104,17 +106,18 @@ flashes reboot).
 
 ### Or by hand — two ways
 
-#### Option A — flash a pre-built binary (no build tools)
+#### Option A — flash a pre-built binary ⚠️ withdrawn (2026-09-26)
 
-Grab the files from the [**latest release**](https://github.com/byjaps/esp32-max35-tv/releases/latest):
-
-| File | When to use it | How |
-|---|---|---|
-| `max35tv-v0.15.1-2026.9.0-ota.bin` | the panel already runs ESPHome and has WiFi | OTA — `esphome upload`, or ESPHome Web |
-| `max35tv-v0.15.1-2026.9.0-factory.bin` | first flash, over the cable (replaces XiaoZhi) | `esptool ... write-flash 0x0` at offset `0x0` |
-
-Then jump to the Home Assistant side below. The `2026.8.2` build ships in the
-same release as a fallback.
+> The binaries that were published here were **built with the author's own
+> `secrets.yaml`**, so they embedded a real WiFi SSID/password and API password —
+> an ESPHome binary carries the config it was compiled with. They have been
+> **removed**. Do not publish or share pre-built ESPHome binaries compiled with
+> your real secrets; if you find one of these files elsewhere, treat those
+> credentials as public.
+>
+> Build from source (Option B) or let an agent do the whole thing (above). A
+> sanitized pre-built binary — compiled from this repo with `secrets.yaml.example`
+> and the captive portal enabled — is the follow-up if people need one.
 
 #### Option B — build and flash it yourself
 
@@ -165,11 +168,19 @@ This project stands on the shoulders of several people:
   "arc reactor" animation, ported from its canvas to the ESPHome display.
 - **[`miketomkins`](https://github.com/miketomkins/hey-hermes-wakeword-model)** —
   the "hey hermes" wake word model (tested, not retained; see `docs/wake-word.md`).
+- **[microwakeword.com](https://microwakeword.com)** — the wake word **library and
+  training service** (community models at
+  [microwakeword.com/library](https://microwakeword.com/library)) that produced
+  the `ok hermes` model shipped in `models/`. Built on
+  [`kahrendt/microWakeWord`](https://github.com/kahrendt/microWakeWord) by Kevin
+  Ahrendt; the official models come from
+  [`esphome/micro-wake-word-models`](https://github.com/esphome/micro-wake-word-models).
 
 ## Documentation
 
 - [`docs/setup-hermes.md`](docs/setup-hermes.md) — flashing + wiring the panel to Hermes
-- [`docs/wake-word.md`](docs/wake-word.md) — wake word, cutoff, false triggers
+- [`docs/wake-word.md`](docs/wake-word.md) — the two wake words, where to get more, cutoffs, false triggers
+- [`docs/performance.md`](docs/performance.md) — voice latency: measurements, the watchdog, and where the real wins are
 - [`docs/audio.md`](docs/audio.md) — shared I2S bus, ES8311 DAC, volume, TTS
 - [`docs/battery.md`](docs/battery.md) — battery ADC, charge curve, charging
 - [`docs/media-player.md`](docs/media-player.md) — media player, metadata, announcements

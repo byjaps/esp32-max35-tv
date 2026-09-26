@@ -88,8 +88,32 @@ the loop phase (`is_ready()`) — so the `delay: 10s` before the start is
 `okay_nabu` is permissive enough to accept ambient speech. Look at the
 **"Last wake word"** `text_sensor` first (the board log isn't persisted). If
 false triggers return, raise `probability_cutoff` (0.93 → 0.95) or **train a
-custom model**, don't jump straight to a tighter cutoff (it misses real
+custom model** (a pt-trained model needs no such compromise — see
+`wake-word.md`), don't jump straight to a tighter cutoff (it misses real
 commands).
+
+### The second wake word never fires
+
+ESPHome enables only the **first** entry of `models:` (`default_enabled = i == 0`);
+any further model boots **disabled, with no error at all**. The config must call
+`micro_wake_word.enable_model` for each model (this repo does it in `mww_resume`
+and re-checks in the 60 s `mwwdiag` interval). The interval log prints each
+model's state — if it says `OFF`, that is why the phrase does nothing.
+
+Related: Home Assistant **disables every model** when it configures the satellite
+and re-enables only the ones in its `active_wake_words` list. If the wake-word
+selects in HA read `no_wake_word`, the list is empty and all models are off. The
+same interval log tells the two situations apart.
+
+### The panel goes deaf after answering (stuck voice state)
+
+If the panel answers and then ignores everything (no wake word, no reaction) until
+it is power-cycled, the voice state machine is stuck: the engine guard only
+restarts detection while the state is `idle`, so a stuck state mutes the panel
+permanently. The **watchdog** in the 2 s `interval` (this repo's YAML) forces the
+state back and restarts the engine — it never cuts in while the speaker is
+playing. To confirm it on an older build, check the `mwwdiag` log line for
+`va_state` and how long it has been held. Details: `performance.md` §1.
 
 ## 🔋 Battery / power
 
