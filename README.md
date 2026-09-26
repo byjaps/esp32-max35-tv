@@ -78,8 +78,8 @@ to re-enable:
 ## Getting started
 
 **You need**: Home Assistant (with an Assist pipeline) and this panel. Building the
-firmware yourself needs ESPHome **2026.9.0** (Python 3.12+); flashing a pre-built
-binary needs no build tools at all.
+firmware yourself needs ESPHome **2026.9.0** (Python 3.12+); or just hand the
+repository to an agent and let it do the whole thing (below).
 
 ### Easiest — hand it to your Hermes agent
 
@@ -106,18 +106,12 @@ flashes reboot).
 
 ### Or by hand — two ways
 
-#### Option A — flash a pre-built binary ⚠️ withdrawn (2026-09-26)
+#### Option A — flash a pre-built binary
 
-> The binaries that were published here were **built with the author's own
-> `secrets.yaml`**, so they embedded a real WiFi SSID/password and API password —
-> an ESPHome binary carries the config it was compiled with. They have been
-> **removed**. Do not publish or share pre-built ESPHome binaries compiled with
-> your real secrets; if you find one of these files elsewhere, treat those
-> credentials as public.
->
-> Build from source (Option B) or let an agent do the whole thing (above). A
-> sanitized pre-built binary — compiled from this repo with `secrets.yaml.example`
-> and the captive portal enabled — is the follow-up if people need one.
+Not available: this repository ships the firmware as **source only**. An ESPHome
+binary carries the whole configuration it was compiled with (network, API), so
+binaries are not shared here — use one of the two paths below. Compiling takes a
+few minutes and the agent path needs nothing else.
 
 #### Option B — build and flash it yourself
 

@@ -8,14 +8,12 @@ the USB-serial port). Recommended laptop workflow:
 
 1. **Dump the original flash first** (to preserve XiaoZhi):
    `esptool.py read_flash 0 0x400000 xiaozhi-original-4MB.bin`
-2. Flash the factory image. Either **compile your own** (`esphome compile
+2. Flash the factory image. Compile it yourself (`esphome compile
    esp32-max35-tv.yaml` → `.esphome/build/<name>/build/firmware.factory.bin`)
-   or **download the pre-built one** —
-   [`max35tv-v0.15.1-2026.9.0-factory.bin`](https://github.com/byjaps/esp32-max35-tv/releases/latest)
-   — and write it over the cable:
+   and write it over the cable:
 
    ```bash
-   esptool.py --chip esp32s3 --port /dev/ttyACM0 write-flash 0x0 max35tv-v0.15.1-2026.9.0-factory.bin
+   esptool.py --chip esp32s3 --port /dev/ttyACM0 write-flash 0x0 firmware.factory.bin
    ```
 3. The board joins your WiFi and connects to HA.
 
@@ -33,10 +31,10 @@ again. From the directory holding your `secrets.yaml` and this YAML:
 esphome run esp32-max35-tv.yaml
 ```
 
-No toolchain on hand? The release also ships a ready-to-flash OTA image
-([`max35tv-v0.15.1-2026.9.0-ota.bin`](https://github.com/byjaps/esp32-max35-tv/releases/latest)):
-upload it with `esphome upload` or the **ESPHome** add-on/Web dashboard — same
-result, no local build.
+No toolchain on hand? Compile on any machine with ESPHome installed and hand the
+resulting `.esphome/build/<name>/build/firmware.ota.bin` to the **ESPHome**
+add-on/Web dashboard — same result, no local toolchain on the machine driving the
+board.
 
 > ✅ **ESPHome 2026.9.0 is the current, supported build** — the board runs it
 > stable (see `troubleshooting.md`). Validate first: `esphome config`.
