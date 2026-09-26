@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render mockups 480x320 do ecra do painel de voz MAX35-TV.
+"""Render 480x320 mockups of the MAX35-TV voice panel screen.
 
 Usa as MESMAS primitivas que o lambda do ESPHome vai usar (quads de triangulos
 para os aneis tracejados, anel cheio, linhas radiais, circulos concentricos para
@@ -7,7 +7,12 @@ o glow) — o que se ve aqui e o que a placa desenha. Cor em ESPHome nao tem
 alpha: tudo o que no canvas original era `globalAlpha` aqui e misturado com o
 preto (fundo) antes de escrever o pixel, que da o mesmo resultado.
 
-Uso:  .venv313/bin/python mockup_render.py [saida.png]
+Since v0.15.5 the screen is minimal: no day of week, no top clock, no date, no
+battery footer - and the time sits in the CENTRE of the ring, in white, while
+idle. Idle is white (it used to share the cyan of "speaking" and the two states
+were indistinguishable on the real panel).
+
+Usage:  python3 mockup_render.py [output.png]
 """
 import math
 import sys
@@ -25,15 +30,16 @@ FONTS = {
 
 # --- paleta / estado (extraida do HUD eadmin2/jarvis_ai) ---------------------
 STATE_STYLE = {
-    "standby":   {"speed": 0.15, "color": (0x00, 0xE5, 0xFF), "glow": 18, "pulse": 0.0},
+    "standby":   {"speed": 0.15, "color": (0xFF, 0xFF, 0xFF), "glow": 18, "pulse": 0.0},
     "listening": {"speed": 0.50, "color": (0x19, 0xF0, 0xD8), "glow": 30, "pulse": 1.0},
     "thinking":  {"speed": 1.60, "color": (0xFF, 0xB3, 0x00), "glow": 26, "pulse": 0.4},
     "tool":      {"speed": 2.40, "color": (0xFF, 0xB3, 0x00), "glow": 32, "pulse": 0.6},
     "speaking":  {"speed": 0.70, "color": (0x00, 0xE5, 0xFF), "glow": 34, "pulse": 0.8},
     "error":     {"speed": 0.05, "color": (0xFF, 0x4D, 0x5E), "glow": 22, "pulse": 0.0},
 }
-LABEL = {"standby": "EM ESPERA", "listening": "A OUVIR", "thinking": "A PENSAR",
-         "speaking": "A FALAR", "error": "ERRO", "media": "A TOCAR"}
+# "standby" has no label: it shows the clock in the centre (v0.15.5).
+LABEL = {"listening": "LISTENING", "thinking": "THINKING",
+         "speaking": "SPEAKING", "error": "ERROR", "media": "NOW PLAYING"}
 GREEN = (30, 215, 96)
 
 
@@ -152,38 +158,33 @@ def draw_reactor(c, cx, cy, base, st, rot, level=0.0, t=0.0, sweep=None):
 
 
 # --- ecras -------------------------------------------------------------------
-def screen_voice(state, rot=140.0, level=0.0, clock="23:47", dia="Sexta-feira",
-                 data="12-09-2026", batt="89%", fade=False):
-    """Reproduz o lambda do display (v0.14.0): dia da semana no topo esquerdo,
-    relogio no topo direito, data no rodape esquerdo, bateria no rodape direito."""
+def screen_voice(state, rot=140.0, level=0.0, clock="23:47", dia=None, data=None, batt=None):
+    """Reproduces the display lambda (v0.15.5): NO day of week, NO top clock, NO
+    date and NO battery footer. While idle the centre of the ring shows the TIME
+    in white (font_med, 40); the other states show their own word in their color."""
     c = Canvas()
     st = STATE_STYLE[state]
     cx, cy, base = 240, 152, 118
-    c.text(10, 6, 24, (210, 210, 210), "TOP_LEFT", dia)
-    c.text(470, 6, 24, (210, 210, 210), "TOP_RIGHT", clock)
     draw_reactor(c, cx, cy, base, st, rot, level if state == "listening" else 0.0)
-    c.text(cx, cy, 24, st["color"], "CENTER", LABEL[state])
-    c.text(10, 292, 24, (210, 210, 210), "TOP_LEFT", data)
-    c.text(470, 292, 24, (210, 210, 210), "TOP_RIGHT", batt)
+    if state == "standby":
+        c.text(cx, cy, 40, (255, 255, 255), "CENTER", clock)
+    else:
+        c.text(cx, cy, 24, st["color"], "CENTER", LABEL[state])
     return c.img
 
 
-def screen_media(titulo="Noite FM", vol=75, rot=140.0, dia="Sexta-feira", data="12-09-2026"):
+def screen_media(titulo="Noite FM", vol=75, rot=140.0, dia=None, data=None):
     c = Canvas()
     cx, cy, base = 130, 160, 92
     st = STATE_STYLE["standby"]
     draw_reactor(c, cx, cy, base, st, rot, sweep=(vol / 100.0, GREEN))
     c.text(cx, cy, 40, GREEN, "CENTER", "{:.0f}%".format(vol))
-    # coluna da direita (mesmas coordenadas do lambda)
-    c.text(258, 78, 24, GREEN, "TOP_LEFT", "A TOCAR")
+    # right column (same coordinates as the lambda)
+    c.text(258, 78, 24, GREEN, "TOP_LEFT", "NOW PLAYING")
     c.text(258, 118, 24, (255, 255, 255), "TOP_LEFT", titulo[:18])
     c.text(258, 156, 16, (150, 150, 150), "TOP_LEFT", "volume {:.0f}%".format(vol))
     c.rect(258, 186, 200, 10, (60, 60, 60))
     c.rect(259, 187, int(198 * vol / 100.0), 8, GREEN)
-    c.text(10, 6, 24, (210, 210, 210), "TOP_LEFT", dia)
-    c.text(470, 6, 24, (210, 210, 210), "TOP_RIGHT", "23:47")
-    c.text(10, 292, 24, (210, 210, 210), "TOP_LEFT", data)
-    c.text(470, 292, 24, (210, 210, 210), "TOP_RIGHT", "89%")
     return c.img
 
 
@@ -212,4 +213,4 @@ if __name__ == "__main__":
         px = c.load()
         lit = sum(1 for y in range(0, H, 2) for x in range(0, W, 2)
                   if sum(px[x, y]) > 40)
-        print("celula", i, "pixeis iluminados:", lit, "/", (W // 2) * (H // 2))
+        print("cell", i, "lit pixels:", lit, "/", (W // 2) * (H // 2))

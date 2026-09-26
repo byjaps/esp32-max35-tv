@@ -22,12 +22,26 @@
 #   v0.15.3 (25/09) custom "ok hermes" wake word model as a 2nd model (enabled
 #                   explicitly: ESPHome only enables the first one by default)
 #                   + voice state watchdog that recovers a stuck va_state
+#   v0.15.4 (26/09) cutoff of the custom "ok hermes" model 0.50 -> 0.90. At 0.50
+#                   the panel woke ~20x in one afternoon (13:38-19:32) on TV
+#                   speech and answered "I didn't get that"; okay_nabu (0.93)
+#                   did not fire once in the same window.
+#   v0.15.5 (26/09) cleaner screen: "idle" is now WHITE (it used to be the same
+#                   cyan as "speaking", so the two were indistinguishable on the
+#                   panel), the weekday / top clock / date / battery are gone,
+#                   and the time moved to the CENTRE of the ring in white.
 #
-# Build/version note: compiled with ESPHome 2026.8.2 ON PURPOSE. The same code
-# compiled with 2026.9.0 rebooted the board every ~60s (seen in log: uptime
-# 3.4s -> 63.5s -> 2.5s) and the bootloader even did a silent rollback to the
-# previous build. Other ESP32 boards in the same HA showed nothing, but on this
-# one (S3 + octal PSRAM) it is reproducible. See docs/troubleshooting.md.
+# Build/version note (measured 26/09/2026): the production builds (0.15.4 /
+# 0.15.5) are compiled with ESPHome 2026.9.0 - `esphome version` says 2026.9.0
+# on the build machine and the device reports "ESPHome 2026.9.0" in its own
+# firmware-version sensor. History: on 20/09 a 2026.9.0 build of the
+# THEN-CURRENT config rebooted this board every ~60 s (uptime 3.4s -> 63.5s ->
+# 2.5s, with a silent bootloader rollback), which is why the 0.15.x builds were
+# pinned to 2026.8.2 for a while. The ~60 s reboots stopped after the va_state
+# watchdog landed (v0.15.3); the 0.15.4 and 0.15.5 builds show no unexpected
+# resets (only `Reboot request from esphome.ota`, i.e. our own OTA flashes).
+# If you build an older revision and hit ~60 s reboots, that is the known
+# issue - see docs/troubleshooting.md.
 # =============================================================================
 
 substitutions:
@@ -50,7 +64,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # initial volume, in % of the UI scale
-  fw_version: "0.15.3"   # firmware version (project.version + HA sensor)
+  fw_version: "0.15.5"   # firmware version (project.version + HA sensor)
 
 esphome:
   name: ${name}
@@ -961,12 +975,14 @@ micro_wake_word:
     # (0.93) also fires on "okay hermes" and serves as a safety net.
     - model: models/ok_hermes.json
       id: ww_ok_hermes
-      # 0.50 = the value delivered by the training. Do NOT change it before
-      # measuring with the "Last wake word" sensor (it reports the model and
-      # the time of every trigger). Raise it if the panel wakes on its own
-      # with the TV/ambient speech - with okay_nabu at 0.90 that happened 3x
-      # on 17/09, and at 0.93 it stopped.
-      probability_cutoff: 0.5
+      # 0.50 -> 0.90 (26/09). At 0.50 the panel woke ~20 times in one
+      # afternoon (13:38-19:32) on TV speech and answered "I didn't get that";
+      # in the same window the official okay_nabu model (0.93) did not fire
+      # once. Measure with the "Last wake word" sensor (it reports the model
+      # and the time of every trigger) before touching this again; if the
+      # panel still wakes on its own, the next step is to drop this model and
+      # keep okay_nabu alone, which already covers both phrasings.
+      probability_cutoff: 0.9
     # --- WHAT THE TWO MODELS TOGETHER CATCH (measured) -----------------------
     # With both models loaded, four phrasings wake the panel:
     #   "okay nabu"    -> okay_nabu
@@ -1124,7 +1140,11 @@ display:
       // conversation.
       int est = id(va_state);
       bool media = id(mp_playing) && est == 0;
-      Color cor(0x00, 0xE5, 0xFF);          // IDLE: cyan, slow
+      // IDLE: WHITE. It used to be the same cyan as SPEAKING, so on the panel
+      // the two states were indistinguishable (a mockup sheet shows it, but
+      // nobody has both screens side by side in front of them). Cyan is now
+      // SPEAKING only.
+      Color cor(0xFF, 0xFF, 0xFF);
       float vel = 9.0f, pulso = 0.0f;
       if (media)         { cor = Color(0x1E, 0xD7, 0x60); vel = 24.0f; pulso = 0.5f; }
       else if (est == 1) { cor = Color(0x19, 0xF0, 0xD8); vel = 30.0f; pulso = 1.0f; }
@@ -1199,24 +1219,13 @@ display:
         }
       };
 
-      // --- top: day of week + clock -----------------------------------------
-      // The day of week occupies the spot where the panel name was and the
-      // date where the IP was (diagnostic - the IP stays visible in HA).
+      // --- clock: the ONLY thing outside the ring -------------------------
+      // v0.15.5 made the screen minimal: the day of week, the top clock, the
+      // date and the battery percentage are gone. The time moved to the CENTRE
+      // of the ring, in the place of the IDLE label (see the voice HUD below).
+      // The battery / uptime / version sensors are still published to Home
+      // Assistant - only the pixels were dropped, no information was lost.
       auto agora_t = id(sntp_time).now();
-      if (agora_t.is_valid()) {
-        // ESPTime.day_of_week: sunday = 1 .. saturday = 7 (esphome/core/time.h)
-        static const char *DAYS[] = {"Sunday", "Monday", "Tuesday", "Wednesday",
-                                     "Thursday", "Friday", "Saturday"};
-        int dow = agora_t.day_of_week;
-        // Day, hour and date with the SAME font and color: the footer lifts
-        // to 292 because font_normal (24 px) occupies 292..316 - at 298 the
-        // text would be cut off by the screen bottom (320 px).
-        if (dow >= 1 && dow <= 7) {
-          it.print(10, 6, id(font_normal), Color(210, 210, 210), TextAlign::TOP_LEFT, DAYS[dow - 1]);
-        }
-        it.strftime(470, 6, id(font_normal), Color(210, 210, 210), TextAlign::TOP_RIGHT, "%H:%M", agora_t);
-        it.strftime(10, 292, id(font_normal), Color(210, 210, 210), TextAlign::TOP_LEFT, "%d-%m-%Y", agora_t);
-      }
 
       if (media) {
         // --- MEDIA SCREEN: the ring shows the VOLUME ------------------------
@@ -1251,20 +1260,29 @@ display:
           if (vv > 100.0f) vv = 100.0f;
           it.printf(240, 152, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (vv + 0.5f));
         } else {
-          const char *stxt = "IDLE";
-          if (est == 1)      stxt = "LISTENING";
-          else if (est == 2) stxt = "THINKING";
-          else if (est == 3) stxt = "SPEAKING";
-          else if (est == 4) stxt = "ERROR";
-          it.print(240, 152, id(font_normal), cor, TextAlign::CENTER, stxt);
+          if (est == 0) {
+            // Idle: the CENTRE shows the TIME, in white (v0.15.5). font_med
+            // (40 px) because the ring centre is wide; the guard keeps the
+            // centre dark for the first seconds after a reboot, before SNTP.
+            if (agora_t.is_valid()) {
+              it.strftime(240, 152, id(font_med), Color(0xFF, 0xFF, 0xFF), TextAlign::CENTER, "%H:%M", agora_t);
+            }
+          } else {
+            const char *stxt = "LISTENING";
+            if (est == 2)      stxt = "THINKING";
+            else if (est == 3) stxt = "SPEAKING";
+            else if (est == 4) stxt = "ERROR";
+            it.print(240, 152, id(font_normal), cor, TextAlign::CENTER, stxt);
+          }
         }
       }
 
-      // --- footer: battery (the date is in the bottom-left corner) ----------
-      float bat = id(battery_percentage).state;
-      if (!isnan(bat)) {
-        it.printf(470, 292, id(font_normal), Color(210, 210, 210), TextAlign::TOP_RIGHT, "%.0f%%", bat);
-      }
+      // --- footer: nothing left here (v0.15.5) ------------------------------
+      /* removed in v0.15.5: the footer with the date and the battery percentage.
+         The battery value still reaches Home Assistant through the `Battery`
+         sensor (and the battery scripts in scripts/ watch it over there) - it
+         just stopped being drawn here. To put it back:
+         it.printf(470, 292, id(font_normal), Color(210, 210, 210), TextAlign::TOP_RIGHT, "%.0f%%", id(battery_percentage).state); */
 
 # NOTE (12/09): this board revision has NO touchscreen - the GT911 does not
 # exist / does not respond and the manufacturer's official config does not
@@ -1337,7 +1355,10 @@ font:
   - file: "gfonts://Roboto"
     id: font_med
     size: 40
-    glyphs: "0123456789%"
+    # Digits for the volume % (media screen) and the time in the centre of the
+    # ring when idle (the ":" is there for the clock - without it the time
+    # renders as "2347" and nothing warns you).
+    glyphs: "0123456789%:"
   - file: "gfonts://Roboto"
     id: font_small
     size: 16

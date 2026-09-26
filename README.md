@@ -26,8 +26,12 @@ repository; the "brain" is Hermes via
   push-to-talk (BOOT button ≥600 ms), local STT, Hermes answers and the panel
   speaks back.
 - **HUD**: animated "arc reactor" state ring on the display — color + speed per
-  state (idle/listening/thinking/speaking/error), clock + day upstream,
-  battery footer.
+  state (idle/listening/thinking/speaking/error). Idle is **white** (it used to
+  share the cyan of "speaking", which made the two states indistinguishable on
+  the real panel) and the time shows in the **centre** of the ring. Since
+  v0.15.5 the screen is minimal: no weekday, no top clock, no date, no battery
+  footer — those values are still published as HA sensors, only the pixels went
+  away.
 - **Media player**: the panel speaker is a HA `media_player` — announcements,
   TTS messages and radio/music work, with a media screen (title + volume ring).
 - **Battery**: real voltage ADC (GPIO6) with a Li-ion %, plus charging status.
@@ -60,7 +64,7 @@ firmware, hence the name). The MAX35-TV-W is the 3.5" reversion here.
 | ![Product](assets/panel-in-action.jpg) | ![Product](assets/product-1.webp) |
 | Real panel running this HUD (idle) | Front view (AliExpress) |
 | ![Product](assets/product-2.webp) | ![HUD states](assets/preview-painel.png) |
-| Board view (AliExpress) | The 5 HUD states + media screen (rendered) |
+| Board view (AliExpress) | The 5 HUD states + media screen (rendered, v0.15.5) |
 
 ### Disabled features
 
