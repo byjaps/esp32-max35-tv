@@ -174,6 +174,19 @@ This project stands on the shoulders of several people:
   Ahrendt; the official models come from
   [`esphome/micro-wake-word-models`](https://github.com/esphome/micro-wake-word-models).
 
+## Built with Hermes Agent
+
+Everything in this repository — the firmware, the HUD, the diagnostics and the
+docs — was built and debugged with
+**[Hermes Agent](https://github.com/NousResearch/hermes-agent)**, the same agent
+this panel talks to on the Home Assistant side. It runs on the
+**[Nous Portal](https://portal.nousresearch.com)** (200+ models, hosted tools,
+monthly credits).
+
+If you are signing up: **new accounts get $15 off their first month** through
+this invite link —
+**[portal.nousresearch.com/r/byjaps](https://portal.nousresearch.com/r/byjaps)**
+
 ## Documentation
 
 - [`docs/setup-hermes.md`](docs/setup-hermes.md) — flashing + wiring the panel to Hermes
