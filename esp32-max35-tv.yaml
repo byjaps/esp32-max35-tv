@@ -30,11 +30,16 @@
 #                   cyan as "speaking", so the two were indistinguishable on the
 #                   panel), the weekday / top clock / date / battery are gone,
 #                   and the time moved to the CENTRE of the ring in white.
+#   v0.15.6 (05/10) ESPHome 2026.9.0 -> 2026.9.1 only, config unchanged. Both
+#                   wake-word models were kept on purpose: measured over
+#                   27/09-05/10, the false wake-ups on TV speech are SPLIT
+#                   (~15 okay_nabu at 0.93 vs ~13 "ok hermes" at 0.90), so
+#                   dropping the custom model alone would only remove half.
 #
-# Build/version note (measured 26/09/2026): the production builds (0.15.4 /
-# 0.15.5) are compiled with ESPHome 2026.9.0 - `esphome version` says 2026.9.0
-# on the build machine and the device reports "ESPHome 2026.9.0" in its own
-# firmware-version sensor. History: on 20/09 a 2026.9.0 build of the
+# Build/version note (updated 05/10/2026): the production builds 0.15.4 / 0.15.5
+# are compiled with ESPHome 2026.9.0 and 0.15.6 with 2026.9.1 - `esphome
+# version` on the build machine and the device's own firmware-version sensor
+# both report the same pair (e.g. "0.15.6 (ESPHome 2026.9.1)"). History: on 20/09 a 2026.9.0 build of the
 # THEN-CURRENT config rebooted this board every ~60 s (uptime 3.4s -> 63.5s ->
 # 2.5s, with a silent bootloader rollback), which is why the 0.15.x builds were
 # pinned to 2026.8.2 for a while. The ~60 s reboots stopped after the va_state
@@ -64,7 +69,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # initial volume, in % of the UI scale
-  fw_version: "0.15.5"   # firmware version (project.version + HA sensor)
+  fw_version: "0.15.6"   # firmware version (project.version + HA sensor)
 
 esphome:
   name: ${name}
