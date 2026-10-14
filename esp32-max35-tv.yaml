@@ -30,6 +30,17 @@
 #                   cyan as "speaking", so the two were indistinguishable on the
 #                   panel), the weekday / top clock / date / battery are gone,
 #                   and the time moved to the CENTRE of the ring in white.
+#   v0.15.7 (14/10) stop the assistant's reply from being cut mid-word. The wake
+#                   word engine was restarted 1 s after Home Assistant FINISHED
+#                   SENDING the audio (on_tts_stream_end) instead of after the
+#                   speaker finished PLAYING it; the engine then grabbed the
+#                   shared I2S bus and killed the rest of the sentence (measured:
+#                   "Desligado" started and stopped halfway, while the same
+#                   audio played through the media_player - where `mp_playing`
+#                   already guards - ran 18.6 s of its 18.9 s). `mww_resume` now
+#                   also requires `!id(box_speaker).is_running()`, waits up to
+#                   30 s (was 6 s) and has a safety net so the board can never be
+#                   left deaf to the wake word.
 #   v0.15.6 (05/10) ESPHome 2026.9.0 -> 2026.9.1 only, config unchanged. Both
 #                   wake-word models were kept on purpose: measured over
 #                   27/09-05/10, the false wake-ups on TV speech are SPLIT
@@ -381,7 +392,7 @@ script:
       - micro_wake_word.enable_model: {id: ww_ok_hermes}
       - micro_wake_word.enable_model: {id: ww_okay_nabu}
       - repeat:
-          count: 15
+          count: 75
           then:
             - if:
                 condition:
@@ -391,10 +402,26 @@ script:
                     # NEVER while media is playing: the engine grabbed the I2S
                     # bus and the speaker died (see globals/mp_playing).
                     - lambda: "return !id(mp_playing);"
+                    # ...e NUNCA com a coluna ainda a tocar. `on_tts_stream_end`
+                    # só diz que o HA acabou de ENVIAR o áudio; o altifalante
+                    # continua a reproduzi-lo durante segundos. Medido
+                    # 14/10/2026: a resposta "Desligado" começava e cortava a
+                    # meio, enquanto o MESMO áudio pelo media_player (onde
+                    # `mp_playing` protege) tocou 18,6 s dos 18,9 s do ficheiro.
+                    - lambda: "return !id(box_speaker).is_running();"
                 then:
                   - micro_wake_word.start:
                       id: mww
                   - delay: 400ms
+      # Rede de segurança: se o áudio for tão longo que o ciclo acima se esgote,
+      # liga na mesma o motor (melhor ouvir mal do que ficar surdo ao "Okay Nabu").
+      - if:
+          condition:
+            not:
+              micro_wake_word.is_running:
+          then:
+            - logger.log: "mww_resume: ciclo esgotado, a ligar o motor na mesma"
+            - micro_wake_word.start: {id: mww}
       - logger.log: "Wake word engine listening again"
       - script.execute: {id: hud_set, state: 0}
 
