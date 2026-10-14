@@ -4,15 +4,16 @@ Each of these cost real debugging time. Read before re-diagnosing.
 
 ## 📦 Build/version
 
-### ESPHome 2026.9.0 — the early reboots were post-flash settling, not a defect
+### ESPHome 2026.9.1 — the early reboots were post-flash settling, not a defect
 
-The first 2026.9.0 build rebooted every ~60 s (log: uptime 3.4 s → 63.5 s →
+The first 2026.9.x build rebooted every ~60 s (log: uptime 3.4 s → 63.5 s →
 2.5 s) and the bootloader even did a silent **rollback** to the previous
 build. That looked like a version bug, but it was **post-flash settling**: the
 board rebooted 2–3 times in the first ~45 min after each flash and then settled
 — measured 1 h 16 min of continuous uptime, and later builds ran stable for
-**2 h 45 m+**. The current firmware runs **ESPHome 2026.9.0** in production,
-stable. **Do not pin to 2026.8.2** — the 2026.9.0 build is the one in use.
+**2 h 45 m+**. The current firmware runs **ESPHome 2026.9.1** in production
+(v0.15.6 onwards), stable. **Do not pin to 2026.8.2 or 2026.9.0** — the
+2026.9.1 build is the one in use.
 Still confirm `esphome version` before compiling and watch 3–4 min after any
 flash (see below).
 
@@ -36,11 +37,32 @@ seen a stable window.
 With `ota: encryption:` in YAML and the board running old plaintext OTA, the
 CLI refuses ("refusing to send the image in plaintext"). Upload with a temp
 copy of the YAML without the `encryption:` block (keep `api: encryption:`), or
-just understand the transition order: the 2026.9.0 bring-up still goes in
+just understand the transition order: the 2026.9.x bring-up goes in
 plaintext; `encryption:` only goes in after the log shows
 `Encryption: offered, plaintext accepted`.
 
 ## 🔊 Audio
+
+### Wake word coming back only a minute after a reply — never gate on the speaker state
+
+A regression worth knowing by name, because the wrong fix looks right.
+`mww_resume` was changed to require `!id(box_speaker).is_running()` before
+restarting the wake word engine, on the theory that `on_tts_stream_end` fires
+when Home Assistant finishes *sending* the audio — so the engine would grab the
+shared I2S bus and cut the reply mid-word. **The theory is wrong.** In
+`voice_assistant.cpp` (`State::RESPONSE_FINISHED`) the trigger only fires once
+`speaker_buffer_size_ == 0` **and** `!has_buffered_data()` **and**
+`!is_running()` — that is, when all the audio has already come out of the
+speaker — and `speaker_->stop()` is called immediately before it. On top of
+that, `is_running()` stays true far longer than the playback lasts, so the
+retry loop never succeeds: the engine only came back through the 60 s interval
+safety net. Measured symptom: *"only about a minute or more later does it hear
+Okay Nabu again"*. Reverted (v0.15.8). The guards that belong there are the ones
+already present: `mp_playing` and `va_state`.
+
+If a reply is ever cut mid-word, **measure the audio before touching the
+firmware**: the pipeline's own cache file in Home Assistant (`/config/tts/`, the
+name starts with the sha1 of the spoken text) and its duration with `ffprobe`.
 
 ### `Parent bus is busy` loop, board seizes up
 

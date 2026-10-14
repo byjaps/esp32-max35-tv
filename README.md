@@ -14,7 +14,7 @@ repository; the "brain" is Hermes via
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/byjaps/esp32-max35-tv)](https://github.com/byjaps/esp32-max35-tv)
 [![Release](https://img.shields.io/github/v/release/byjaps/esp32-max35-tv?label=release&color=blue)](https://github.com/byjaps/esp32-max35-tv/releases/latest)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.0-green.svg)](https://esphome.io)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.1-green.svg)](https://esphome.io)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](hardware/README.md)
 [![HA Role](https://img.shields.io/badge/Home%20Assistant-Conversation%20Agent-blueviolet.svg)](hermes/README.md)
 [![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](docs/troubleshooting.md)
@@ -82,7 +82,7 @@ to re-enable:
 ## Getting started
 
 **You need**: Home Assistant (with an Assist pipeline) and this panel. Building the
-firmware yourself needs ESPHome **2026.9.0** (Python 3.12+); or just hand the
+firmware yourself needs ESPHome **2026.9.1** (Python 3.12+); or just hand the
 repository to an agent and let it do the whole thing (below).
 
 ### Easiest — hand it to your Hermes agent
@@ -98,7 +98,7 @@ running instead of trusting the upload.
 Something like this is enough:
 
 > Clone `https://github.com/byjaps/esp32-max35-tv` and set up the MAX35-TV voice
-> panel for my Home Assistant. Build with ESPHome 2026.9.0, create the secrets
+> panel for my Home Assistant. Build with ESPHome 2026.9.1, create the secrets
 > file, flash it over the network, then confirm on the device which firmware
 > version is really running.
 
@@ -131,7 +131,7 @@ few minutes and the agent path needs nothing else.
 5. Set up the Assist pipeline to use Hermes as its conversation agent, and select
    the panel as the satellite that uses that pipeline.
 
-> ✅ **Builds and runs on ESPHome 2026.9.0** (the current release). The board
+> ✅ **Builds and runs on ESPHome 2026.9.1** (the current release). The board
 > runs it stable for hours. Validate any change with `esphome config` before
 > flashing. After any flash the panel may reboot 2–3 times in the first ~45 min
 > while the new image settles — that is expected, not a defect

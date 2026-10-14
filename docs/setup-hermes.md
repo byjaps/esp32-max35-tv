@@ -36,7 +36,7 @@ resulting `.esphome/build/<name>/build/firmware.ota.bin` to the **ESPHome**
 add-on/Web dashboard — same result, no local toolchain on the machine driving the
 board.
 
-> ✅ **ESPHome 2026.9.0 is the current, supported build** — the board runs it
+> ✅ **ESPHome 2026.9.1 is the current, supported build** — the board runs it
 > stable (see `troubleshooting.md`). Validate first: `esphome config`.
 
 ## 3. Home Assistant side
