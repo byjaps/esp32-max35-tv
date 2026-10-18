@@ -47,24 +47,24 @@
 # v0.12.2 (12/09/2026) — volume sobrevive a reinícios:
 #   O `number` "Volume da coluna" passa a `restore_value: true` e é ele que manda
 #   no arranque (o `on_boot` alinha o speaker e o media player no valor dele).
-#   Sem isto, cada OTA/reboot repunha 75 e apagava a escolha do Joel.
+#   Sem isto, cada OTA/reboot repunha 75 e apagava a escolha do autor.
 #
-# v0.13.0 (12/09/2026) — piso audivel (a pedido do Joel):
+# v0.13.0 (12/09/2026) — piso audivel (a pedido do autor):
 #   O curso 0-100 da UI passa a mapear em vol_min..vol_max (0.35..0.80 no speaker)
 #   em vez de 0.0..0.75. Motivo medido no ES8311 (reg 0x32, dB = reg*0.5 - 95.5):
-#   a 0.2625 — que era o "35" que o Joel apontava — são -62 dB e nao se ouve nada;
+#   a 0.2625 — que era o "35" que o autor apontava — são -62 dB e nao se ouve nada;
 #   metade de baixo do slider era deserto. Agora o minimo vale -51 dB (0.35) e o
 #   maximo sobe de 0 dB (0.75) para +6.5 dB (0.80).
 #
 # v0.13.1 (12/09/2026) — teto de volta e fim da luta de volumes:
-#   O teto de 0.80 (+6.5 dB) distorcia: recusado pelo Joel, volta a 0.75 (0 dB).
+#   O teto de 0.80 (+6.5 dB) distorcia: recusado pelo autor, volta a 0.75 (0 dB).
 #   O piso de 0.35 (-51 dB) FICA — e o ponto a partir do qual se ouve.
 #   O volume passa a ser por EVENTO nos dois sentidos (`on_volume` espelha no
 #   `number`) em vez de sondagem de 2 s: o media player DESCARTA sets de volume
 #   quando a fila esta cheia (`xQueueSend(..., 0)`), logo adoptar o valor dele
 #   deixava o number preso num valor antigo (visto: 90, depois 100).
 #
-# v0.14.0 (12/09/2026) — ECRÃ: HUD "arc reactor" (o anel que o Joel escolheu):
+# v0.14.0 (12/09/2026) — ECRÃ: HUD "arc reactor" (o anel que o autor escolheu):
 #   + anel de estado animado (cor + velocidade por estado), portado do canvas
 #     do HUD jarvis_ai para as primitivas do display do ESPHome (filled_ring/
 #     filled_circle/filled_triangle) — SEM alpha: o que era `globalAlpha` e
@@ -120,7 +120,7 @@
 #     DEBUG e o aparelho está em INFO — foi por isso que a 0.15.9 parecia morta).
 #   + delay 700ms -> 1200ms antes de reabrir: o amplificador ainda está a
 #     esvaziar quando o último byte sai.
-# v0.15.9 (18/10/2026) — MODO CONVERSA (pedido do Joel: "respostas e ações
+# v0.15.9 (18/10/2026) — MODO CONVERSA (pedido do autor: "respostas e ações
 #   rápidas, conversa fluida", depois de ver um demo em que se dão ordens seguidas
 #   sem repetir a wake word):
 #   + depois do TTS acabar, a placa reabre o microfone SOZINHA (sem "okay nabu")
@@ -137,7 +137,7 @@
 #   quando o modo conversa não se aplica (ver a lição da v0.15.7/0.15.8).
 # v0.15.8 (14/10/2026) — REVERTIDA a v0.15.7 (era um erro meu):
 #   A guarda nova (`!id(box_speaker).is_running()` no mww_resume) deixava o motor
-#   de wake word parado ~30-60 s depois de cada resposta — medido pelo Joel: "so
+#   de wake word parado ~30-60 s depois de cada resposta — medido pelo autor: "so
 #   passado prai 1 minuto e que volta a ouvir o ok nabu".
 #   PROVA NA FONTE DO ESPHOME (components/voice_assistant/voice_assistant.cpp,
 #   State::RESPONSE_FINISHED): o gatilho `on_tts_stream_end` SO dispara depois de
@@ -160,13 +160,13 @@
 #   espera ate 30 s em vez de 6 s; se esgotar, liga o motor na mesma (nunca fica
 #   surdo ao "Okay Nabu").
 # v0.15.6 (05/10/2026) — SÓ atualização do ESPHome: 2026.9.0 -> 2026.9.1.
-#   Config inalterada: o Joel decidiu MANTER os dois modelos de wake word como
+#   Config inalterada: o autor decidiu MANTER os dois modelos de wake word como
 #   estão. Razão (medido no sensor "Ultima wake word", 27/09-05/10): os falsos
 #   disparos com a TV estão REPARTIDOS — ~15 do `okay_nabu` (0.93) contra ~13 do
 #   `ok hermes` (0.90); os 3 que ele ouviu hoje ("Não percebi") foram do
 #   okay_nabu. Tirar o ok hermes só resolveria metade e não se perde nada (o
 #   okay_nabu já apanha "ok hermes", medido 17/09) — fica como opção se voltar.
-# v0.15.5 (26/09/2026) — ECRA MAIS CLEAN (pedido do Joel):
+# v0.15.5 (26/09/2026) — ECRA MAIS CLEAN (pedido do autor):
 #   + "em espera" passou a BRANCO (era o mesmo ciano do "a falar" — no painel não
 #     se distinguiam; o ciano fica só para o "a falar");
 #   + saíram do ecrã: dia da semana, relógio do topo, data e bateria do rodapé
@@ -182,7 +182,7 @@
 #   (As duas subiram no MESMO commit do repo — 465ede0 — e so a 0.15.3 ficou com
 #   o numero; o texto desta entrada vem do proprio commit, nao foi inventado.)
 # v0.15.1 (20/09/2026) — sensor "Motivo do ultimo reset" (diagnostico dos reinicios).
-# v0.15.0 (20/09/2026) — GESTOS NO BOTAO (pedido do Joel):
+# v0.15.0 (20/09/2026) — GESTOS NO BOTAO (pedido do autor):
 #   + clique curto = volume +10% | clique duplo = volume -10%
 #     (antigo: qualquer toque abria logo a conversa)
 #   + premir >=600 ms = assistente de voz (push-to-talk, como antes)
@@ -208,7 +208,7 @@ substitutions:
   #   vol_min 0.35 -> reg 89  -> -51 dB (o mais baixo que ainda se ouve; abaixo
   #                 disto e deserto morto — era o "35" antigo, a -62 dB)
   #   vol_max 0.75 -> reg 191 -> 0 dB (o maximo ANTES de distorcer). 0.80 (+6.5 dB)
-  #                 ja distorcia — testado e recusado pelo Joel a 12/09.
+  #                 ja distorcia — testado e recusado pelo autor a 12/09.
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
@@ -453,7 +453,7 @@ globals:
     restore_value: no
     initial_value: "0"
   # Volume unico da coluna, em %. O `number` (HA) e o `media_player` (cartao do
-  # HA) escrevem os DOIS no mesmo speaker — sem um valor so, divergem (o Joel
+  # HA) escrevem os DOIS no mesmo speaker — sem um valor so, divergem (o autor
   # apanhou-os com 65% e 82% ao mesmo tempo) e o mais alto satura o ES8311.
   - id: vol_pct
     type: float
@@ -716,7 +716,7 @@ number:
     step: 1
     initial_value: 75
     # Guarda o valor entre reinícios: e ele que manda no volume da coluna. Sem
-    # isto, cada update/reboot repunha 75 e apagava a escolha do Joel.
+    # isto, cada update/reboot repunha 75 e apagava a escolha do autor.
     restore_value: true
     set_action:
       - speaker.volume_set:
@@ -869,7 +869,7 @@ interval:
       #       - o ecra ficava em "a ouvir"/"a falar" para sempre;
       #       - a guarda (3) NUNCA devolvia o motor a escuta, porque exige
       #         va_state == 0 -> painel SURDO ate se desligar da corrente
-      #         (3 min 15 s, ate o Joel cortar a alimentacao).
+      #         (3 min 15 s, ate o autor cortar a alimentacao).
       #     Aqui carimba-se o instante de cada mudanca de estado...
       - lambda: |-
           static int est_ant = -1;
@@ -1223,7 +1223,7 @@ micro_wake_word:
   # Quem o volta a arrancar e o on_end do voice_assistant (mais abaixo).
   stop_after_detection: true
   # Modelos iguais aos do config oficial do fabricante para esta placa
-  # (Spotpear_TV.yaml). O Joel testou na app do HA e o "Okay Nabu" e o que
+  # (Spotpear_TV.yaml). O autor testou na app do HA e o "Okay Nabu" e o que
   # funciona melhor com o sotaque dele. Bare names = repositorio oficial
   # github.com/esphome/micro-wake-word-models (models/v2/<nome>.json).
   models:
@@ -1236,10 +1236,10 @@ micro_wake_word:
       # O modelo e treinado em ingles (trained_languages: [en]); 0.97 era
       # exigente demais para o sotaque pt-PT, mas 0.90 dispara com fala
       # ambiente. 0.93 e o meio. Se voltar a disparar sozinho, subir mais
-      # (0.95) ou treinar um modelo com a voz do Joel.
+      # (0.95) ou treinar um modelo com a voz do autor.
       probability_cutoff: 0.93
     # --- "Ok Hermes" PROPRIO (25/09) ---------------------------------------
-    # Modelo treinado em pt no microwakeword.com que o Joel trouxe (ok_hermes.zip).
+    # Modelo treinado em pt no microwakeword.com que o autor trouxe (ok_hermes.zip).
     # Ficheiros locais, nesta pasta: o `.json` e o manifesto e aponta para
     # `./ok_hermes.tflite` (tem de ficar ao lado, com este nome). Verificado antes
     # de instalar: TFLite INT8 com entrada [1,3,40] e saida [1,1] — a assinatura
@@ -1262,13 +1262,13 @@ micro_wake_word:
       # okay_nabu so ja cobre "okay nabu" e "okay hermes".
       probability_cutoff: 0.9
     # SO este modelo (17/09). Medido no sensor "Ultima wake word":
-    #   "okay nabu"   -> dispara (5 estrelas, Joel)
+    #   "okay nabu"   -> dispara (5 estrelas, autor)
     #   "okay hermes" -> dispara TAMBEM, por este modelo (frase proxima)
     #   "hey nabu"    -> nao dispara
     #   "hey hermes"  -> nao dispara (o modelo hey_hermes EN, miketomkins,
     #                    v1.0.0, foi testado e removido: nao responde a voz
-    #                    do Joel, ocupava arena e tinha cutoff 0.32)
-    # Os dois wake words que o Joel usa estao portanto cobertos por aqui.
+    #                    do autor, ocupava arena e tinha cutoff 0.32)
+    # Os dois wake words que o autor usa estao portanto cobertos por aqui.
     # Custo: esta sensibilidade (0.93) tambem aceita fala de TV -> 17/09
     # disparou sozinho 3x. Se voltar a acontecer, o caminho certo e treinar
     # um modelo com a voz dele (microwakeword.com), nao apertar o cutoff.
@@ -1326,7 +1326,8 @@ voice_assistant:
   # v0.15.13 — 3 -> 1. A supressão de ruído do ESPHome (Speex) no nível máximo
   # come os sons fricativos: medido com o log do assist_pipeline, "janelas" saía
   # "anelas" (perde o J), "vermelho" saía "bremeiro"/"bromeio" (perde o V) e
-  # "Lili" saía "li li". O comando não casava com nenhuma frase, caía no agente
+  # um nome próprio saía "li li". O comando não casava com nenhuma frase, caía
+  # no agente
   # e a resposta passava de 0,1 s para 9-14 s. Nível 1 limpa o fundo sem estragar
   # as consoantes.
   noise_suppression_level: 1
@@ -1479,10 +1480,10 @@ display:
       // announcement_pipeline deste media player (`voice_assistant: TTS stream
       // start` -> `speaker_media_player: State changed to ANNOUNCING`), logo
       // `mp_playing` fica a true durante CADA resposta falada e, sem a guarda,
-      // o ecra trocava para "A TOCAR" a meio da conversa (visto pelo Joel).
+      // o ecra trocava para "A TOCAR" a meio da conversa (visto pelo autor).
       int est = id(va_state);
       bool media = id(mp_playing) && est == 0;
-      // EM ESPERA: BRANCO (pedido do Joel, 26/09 — era o mesmo ciano do "A FALAR"
+      // EM ESPERA: BRANCO (pedido do autor, 26/09 — era o mesmo ciano do "A FALAR"
       // e no painel nao se distinguiam; agora o ciano e' so do "A FALAR").
       Color cor(0xFF, 0xFF, 0xFF);
       float vel = 9.0f, pulso = 0.0f;
@@ -1559,7 +1560,7 @@ display:
         }
       };
 
-      // --- relogio: a UNICA informacao fora do anel (pedido do Joel, 26/09) --
+      // --- relogio: a UNICA informacao fora do anel (pedido do autor, 26/09) --
       // O ecra ficou mais limpo: sairam o dia da semana, a data, a hora do topo e
       // a percentagem da bateria do rodape. O relogio desceu para o CENTRO do
       // anel, no lugar do "EM ESPERA" (ver o HUD de voz mais abaixo). A hora
@@ -1605,7 +1606,7 @@ display:
           it.printf(240, 152, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (vv + 0.5f));
         } else {
           if (est == 0) {
-            // Em espera o CENTRO mostra as HORAS, em branco (pedido do Joel,
+            // Em espera o CENTRO mostra as HORAS, em branco (pedido do autor,
             // 26/09): o "EM ESPERA" saiu e o relogio que estava no topo desceu
             // para aqui. font_med (40 px) porque o centro do anel e' largo.
             if (agora_t.is_valid()) {
@@ -1621,7 +1622,7 @@ display:
         }
       }
 
-      // --- rodape: SAIRAM a data e a bateria (pedido do Joel, 26/09: ecra mais
+      // --- rodape: SAIRAM a data e a bateria (pedido do autor, 26/09: ecra mais
       // clean). O valor da bateria continua a chegar ao HA pelo sensor
       // `Bateria` (e ha o gestor de bateria do painel a vigia-lo) — so deixou
       // de ser desenhado aqui. Para repor, era um `it.printf(470, 292, ...)`
