@@ -51,6 +51,29 @@ The safety rule in all of it: a clause is only dropped or handled locally when
 the intent parser recognises the remainder **without executing anything** — so a
 sentence holding two real commands is never half-executed.
 
+## 2b. Conversation mode: the follow-up window lives in the firmware
+
+`conversation_timeout` in `voice_assistant` is **not** a listening window — in the
+ESPHome source it only resets the `conversation_id` (`voice_assistant.cpp`). With
+it alone the panel goes quiet after each answer and every phrase needs the wake
+word again. The follow-up has to exist in the firmware:
+
+- `conv_followup` (called from `on_tts_stream_end`, i.e. after the audio has
+  really left the speaker) waits ~1.2 s for the speaker to release the I2S bus,
+  then starts the pipeline again **without a wake word** while the chain is under
+  the cap.
+- `conv_janela` closes the window after **7 s** if nobody spoke — it keys on
+  `conv_espera`, which drops in `on_stt_vad_end` / `on_end` / `on_error`, because
+  `va_state` is still `3` at that moment and would keep the window open forever.
+- The cap is a `number` entity (`Responses in a row`, 0–50, default **10**).
+  **0 disables conversation mode** without recompiling — that is the safety brake
+  if the TV ever starts firing turns. Measured: 11 commands in a row without the
+  wake word, the 12th asks for it (cap working as designed).
+
+Symptom if it is misconfigured: the panel answers once and then ignores the next
+phrase — check the log for the `conv:` lines (they must be `level: INFO`; a
+`logger.log` without `level` is DEBUG and never shows up).
+
 ## 3. Phrases the HA parser doesn't know: config, not code
 
 `what time is it` was answered in 0.2 s; `can you tell me the time?` cost 7.6 s

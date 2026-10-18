@@ -72,6 +72,39 @@ board stops responding to WiFi. **Fix: `on_turn_on` trigger + `mp_playing`
 lock** — never rely on `on_play` (too late) or `on_end` (too early). See
 `media-player.md`.
 
+### Screen stuck on "speaking", no sound at all (v0.15.15)
+
+Log signature, once per second:
+
+```
+[E][i2s_audio.speaker:115]: Driver failed to start; retrying in 1 second
+[E][i2s_audio.speaker.std]: Parent bus is busy
+```
+
+Home Assistant asked for a TTS reply, the wake word engine was holding the I2S
+bus, so the speaker never started — and without `on_tts_stream_end` the voice
+state stayed on `speaking` forever. The normal watchdog does **not** rescue this
+because it counts from the last state *change*, and the state never changes.
+
+Three fixes, all in this repo's YAML:
+
+- `micro_wake_word.stop` in **`on_tts_stream_start`**, before the first byte, and
+  in the 2 s interval whenever the voice state is `thinking`/`speaking`;
+- the "nobody spoke" branch no longer restarts the engine by hand — `on_end`
+  does it (2 s delay + state check), the proven path;
+- a new guard: a TTS request pending for **>15 s** with
+  `box_speaker.is_running()` false → stop the engine, repaint idle and
+  `mww_resume`.
+
+### Red error icon every time you stay silent (v0.15.14)
+
+When the VAD triggers on noise and nobody speaks, the STT returns an empty
+string and Home Assistant ends the pipeline with the error
+**`stt-no-text-recognized`** (`assist_pipeline/default_pipeline.py`). The
+`on_error` handler used to paint the error state (red ring, 15 s) for what is
+just silence. This repo treats that code as "nobody spoke" — back to idle and
+the wake word engine, no alarm. Any other code is still a real error.
+
 ### Distorted / "strange noise" speech
 
 - First: `speaker.sample_rate` must equal `audio_dac.sample_rate` and the

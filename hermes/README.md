@@ -10,7 +10,8 @@ is a HACS component (author: **Sam Russell / rusty4444**) that registers Hermes
 Agent as a selectable **Conversation Agent** in Home Assistant's Assist
 pipelines. Once selected:
 
-- wake word / push-to-talk → **local STT** (whisper.cpp) → **Hermes** handles
+- wake word / push-to-talk → **local STT** (Home Assistant's Whisper add-on —
+  faster-whisper in our deployment, whisper.cpp works too) → **Hermes** handles
   the conversation → **TTS** back on the panel speaker.
 - It runs on local hardware, no cloud, no subscription, no added latency from
   an external service.
@@ -30,12 +31,12 @@ MAX35-TV (ESPHome, this repo)
 Follow the author's README. In short:
 
 ```bash
-python3 -m pip install --upgrade "hermes-voice-ha-integration @ git+https://github.com/rusty4444/hermes-voice-ha-integration.git@v0.0.14"
+python3 -m pip install --upgrade "hermes-voice-ha-integration @ git+https://github.com/rusty4444/hermes-voice-ha-integration.git@v0.0.15"
 ```
 
-(v0.0.14 is the current release — check the author's
+(v0.0.15 is the current release — check the author's
 [releases](https://github.com/rusty4444/hermes-voice-ha-integration/releases) for
-anything newer; the two `byjaps` PRs below are included from v0.0.14 on.)
+anything newer; the three `byjaps` PRs below are included from v0.0.15 on.)
 
 or install via HACS in Home Assistant. Then configure Hermes's WebSocket URL /
 token so HA reaches Hermes, enable the `home_assistant` and `voice_stack`
@@ -52,13 +53,16 @@ It supports `off` / `answers` / `commands`.
 
 ## Contribution
 
-This setup includes two `byjaps` PRs merged upstream:
+This setup includes three `byjaps` PRs merged upstream:
 
 - [#42](https://github.com/rusty4444/hermes-voice-ha-integration/pull/42) —
   WebSocket reconnect robustness.
 - [#46](https://github.com/rusty4444/hermes-voice-ha-integration/pull/46) —
   instant local answers (and stopping whisper noise from breaking intent
   matching).
+- [#47](https://github.com/rusty4444/hermes-voice-ha-integration/pull/47) —
+  empty/whitespace transcripts no longer reach the agent (fixes the long pause
+  after a noise-triggered turn).
 
 **That component is upstream software — please direct issues, feature
 requests and contributions to the author's repository, not here.** This folder

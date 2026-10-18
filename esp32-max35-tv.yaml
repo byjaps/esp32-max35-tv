@@ -212,7 +212,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.15.13"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.15.15"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -422,6 +422,17 @@ globals:
   # corrente (o lado HA ja tinha acabado; a pipeline fechou sem disparar o
   # on_tts_stream_end nem o on_end).
   - id: va_estado_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  # v0.15.15 — instante em que o HA pediu para FALAR (TTS). Fica a 0 quando o
+  # audio acabou. Serve para apanhar o estado preso em "a falar" em que a coluna
+  # nunca chega a arrancar (barramento I2S agarrado pelo motor de wake word):
+  #   [E][i2s_audio.speaker:115]: Driver failed to start; retrying in 1 second
+  #   [E][i2s_audio.speaker.std]: Parent bus is busy
+  # Visto a 18/10: o ecra ficava em "a falar" para sempre e o `va_state` tambem,
+  # porque o watchdog normal conta a partir da ultima MUDANCA de estado.
+  - id: tts_pend_ms
     type: uint32_t
     restore_value: no
     initial_value: "0"
@@ -788,11 +799,35 @@ interval:
       - if:
           condition:
             all:
-              - lambda: "return id(mp_playing);"
               - micro_wake_word.is_running:
+              # v0.15.15: tambem com a voz em curso (a pensar 2 / a falar 3).
+              # O `on_start` da pipeline ja para o motor, mas um `mww_resume`
+              # atrasado (do turno anterior) voltava a po-lo a correr a meio e a
+              # coluna ficava a repetir "Parent bus is busy" para sempre.
+              - any:
+                  - lambda: "return id(mp_playing);"
+                  - lambda: "return id(va_state) == 2 || id(va_state) == 3;"
           then:
             - micro_wake_word.stop:
                 id: mww
+      # (1b) v0.15.15 — "A FALAR" SEM SOM: o HA pediu TTS mas a coluna nunca
+      #      arrancou (I2S agarrado). Sem isto o ecra e o va_state ficam em 3
+      #      para sempre e o watchdog normal nunca dispara (conta a partir da
+      #      ultima MUDANCA de estado).
+      - if:
+          condition:
+            all:
+              - lambda: "return id(tts_pend_ms) != 0 && (millis() - id(tts_pend_ms) > 15000);"
+              - not:
+                  lambda: "return id(box_speaker).is_running();"
+              - lambda: "return !id(mp_playing);"
+          then:
+            - logger.log: "TTS pedido ha >15s sem a coluna arrancar -> a destravar"
+            - lambda: "id(tts_pend_ms) = 0;"
+            - micro_wake_word.stop:
+                id: mww
+            - script.execute: {id: hud_set, state: 0}
+            - script.execute: {id: mww_resume}
       # (2) Destravar: armado ha mais de 10 s sem nada a tocar nem a anunciar
       #     (comando aceite mas a pipeline nunca arrancou: URL morto, ou alguem
       #     a mexer no cartao do HA). Sem isto a wake word nunca voltava.
@@ -1212,7 +1247,7 @@ micro_wake_word:
     # `.pmdl`/`.onnx`/ESP-SR). md5 do tflite: 25eeaea2cf8a3a8492bf3b4016de0993.
     # Fica AO LADO do okay_nabu: este e o modelo dedicado, o outro (0.93) ja
     # dispara em "okay hermes" e serve de rede de seguranca.
-    - model: ok_hermes.json
+    - model: models/ok_hermes.json
       id: ww_ok_hermes
       # 0.50 = valor entregue pelo treino. NAO mexer antes de medir no sensor
       # "Ultima wake word" (diz o modelo e a hora de cada disparo). Subir se
@@ -1259,6 +1294,22 @@ micro_wake_word:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
 
+# v0.15.14 (18/10/2026) — O ICONE VERMELHO DEIXA DE APARECER QUANDO NAO SE DIZ NADA.
+#   Medido: a janela de conversa abre o microfone; se o VAD dispara com ruido (ou
+#   o utilizador nao fala), o whisper devolve texto vazio e o HA termina a pipeline
+#   com o erro `stt-no-text-recognized` (default_pipeline.py). O `on_error` pintava
+#   o ecra de erro (estado 4) durante 15 s. Agora esse codigo e' tratado como
+#   "ninguem falou": volta a espera e ao motor de wake word, sem alarme.
+# v0.15.15 (18/10/2026) — ECRA PRESO EM "A FALAR" SEM SOM (Parent bus is busy).
+#   Visto logo a seguir ao teste do silencio: o HA pediu o TTS, o motor de wake
+#   word estava a agarrar o barramento I2S e a coluna ficava a repetir
+#   "[E][i2s_audio.speaker:115] Driver failed to start; retrying in 1 second /
+#   Parent bus is busy" — sem `on_tts_stream_end` o va_state nunca voltava a 0 e
+#   o watchdog normal (que conta a partir da ultima MUDANCA de estado) nao
+#   disparava. Remedios: (a) `micro_wake_word.stop` no `on_tts_stream_start` e no
+#   interval de 2 s sempre que va_state e 2/3; (b) o ramo do silencio deixou de
+#   arrancar o motor a mao (quem o faz e o `on_end`, provado); (c) guarda nova
+#   em (1b): TTS pedido ha >15 s sem a coluna a correr -> destrava.
 voice_assistant:
   id: va
   microphone: box_mic
@@ -1332,8 +1383,15 @@ voice_assistant:
   # audio acaba de tocar (chega a haver 30+ s entre os dois). O estado real de
   # reproducao esta nestes dois gatilhos.
   on_tts_stream_start:
+    # v0.15.15: a coluna vai precisar do barramento I2S — o motor de wake word
+    # tem de sair da frente ANTES do primeiro byte (senao: "Parent bus is busy"
+    # em ciclo e o ecra preso em "a falar").
+    - micro_wake_word.stop:
+        id: mww
+    - lambda: "id(tts_pend_ms) = millis();"
     - script.execute: {id: hud_set, state: 3}
   on_tts_stream_end:
+    - lambda: "id(tts_pend_ms) = 0;"
     # O ultimo byte ja saiu para a coluna. Quem devolve o motor a escuta E o
     # ecra a "em espera" e o mww_resume, que espera pelo barramento I2S (o
     # estalido da coluna a desligar) em vez de contar um tempo fixo.
@@ -1347,10 +1405,26 @@ voice_assistant:
     - lambda: |-
         id(conv_espera) = false;
         id(conv_count) = 0;
+        id(tts_pend_ms) = 0;
+        ESP_LOGW("vaerro", "codigo=%s mensagem=%s", code.c_str(), message.c_str());
     - script.stop: conv_janela
-    - script.execute: {id: hud_set, state: 4}
-    - micro_wake_word.start:
-        id: mww
+    # v0.15.14: "ninguem falou" (o VAD disparou com ruido e o STT devolveu vazio)
+    # NAO e' avaria — o HA fecha a pipeline com `stt-no-text-recognized`. Voltar
+    # a espera sem pintar o ecra de erro evita o icone vermelho a cada silencio.
+    - if:
+        condition:
+          lambda: 'return code == "stt-no-text-recognized";'
+        then:
+          - logger.log: "Nada dito -> volta a espera sem erro"
+          - script.execute: {id: hud_set, state: 0}
+          # v0.15.15: NAO arrancar o motor aqui. Quem o devolve a escuta e o
+          # `on_end` (espera 2 s e testa o estado), que ja e o caminho provado;
+          # arrancar a mao punha o motor a agarrar o I2S antes de a coluna
+          # largar o barramento -> "Parent bus is busy" em ciclo.
+        else:
+          - script.execute: {id: hud_set, state: 4}
+          - micro_wake_word.start:
+              id: mww
   on_end:
     - logger.log: "Conversa terminada"
     # v0.15.9: a pipeline fechou -> a janela de espera ja nao existe.
@@ -1562,12 +1636,11 @@ display:
 # --- CÂMARA (GC0308/OV5640, auto-detetada) -----------------------------------
 # Pinos do ficheiro oficial do fabricante (spotpear-tv_hw.yaml).
 # GPIO3 é strapping pin mas é usado aqui como D5 (confirmado no oficial).
-# --- CAMARA (removida 13/09 a pedido do Joel) --------------------------------
+# --- CAMARA (desligada de proposito) ----------------------------------------
 # Nao serve de sensor de movimento: a placa nao tem LED de infravermelhos (de
-# noite nao ve nada) e o ESPHome nao faz deteccao de movimento por imagem. O
-# Joel ja tem isso na camara da cozinha (cam1). Manter isto custava 12 KB de
-# RAM, 65 KB de flash e ~1,2 MB de PSRAM. Para voltar a por: tirar os '#' a
-# este bloco (copia intacta em esp32-max35-tv.yaml.bak-com-camera-13-09).
+# noite nao ve nada) e o ESPHome nao faz deteccao de movimento por imagem.
+# Manter isto custava 12 KB de RAM, 65 KB de flash e ~1,2 MB de PSRAM.
+# Para voltar a por: tirar os '#' a este bloco.
 # esp32_camera:
 #   id: lcd_camera
 #   name: "Câmara"

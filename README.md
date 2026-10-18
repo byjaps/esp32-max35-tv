@@ -32,6 +32,13 @@ repository; the "brain" is Hermes via
   v0.15.5 the screen is minimal: no weekday, no top clock, no date, no battery
   footer — those values are still published as HA sensors, only the pixels went
   away.
+- **Conversation mode**: after each answer the panel reopens the microphone for
+  **7 s**, so follow-up phrases need no wake word. The chain is capped by a
+  `number` entity (**10** by default, 0 disables it) — the cap is a safety brake,
+  not a usage limit. Details: [`docs/performance.md`](docs/performance.md) §2b.
+- **Fast local commands**: plain home commands are answered by HA's own intent
+  engine in **0.01-0.2 s**, never by the LLM (multi-command sentences and
+  transcribed noise are handled locally too — see `docs/performance.md` §2).
 - **Media player**: the panel speaker is a HA `media_player` — announcements,
   TTS messages and radio/music work, with a media screen (title + volume ring).
 - **Battery**: real voltage ADC (GPIO6) with a Li-ion %, plus charging status.
@@ -157,8 +164,9 @@ This project stands on the shoulders of several people:
   [`hermes-voice-ha-integration`](https://github.com/rusty4444/hermes-voice-ha-integration):
   the HACS component that makes **Hermes** the HA Conversation Agent. It is the
   brain of this voice panel. Includes merged `byjaps` PRs [#42](https://github.com/rusty4444/hermes-voice-ha-integration/pull/42)
-  (WebSocket reconnect) and [#46](https://github.com/rusty4444/hermes-voice-ha-integration/pull/46)
-  (instant local intent answers).
+  (WebSocket reconnect), [#46](https://github.com/rusty4444/hermes-voice-ha-integration/pull/46)
+  (instant local intent answers) and [#47](https://github.com/rusty4444/hermes-voice-ha-integration/pull/47)
+  (empty transcripts no longer reach the agent).
 - **Spotpear** — the board, the official wiki and the hardware documentation.
 - **[`RealDeco/xiaozhi-esphome`](https://github.com/RealDeco/xiaozhi-esphome)** —
   the reference ESPHome config for this board (pins, codecs, wake word).
