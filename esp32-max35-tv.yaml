@@ -212,7 +212,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.15.16"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.15.17"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -495,6 +495,17 @@ globals:
     initial_value: "0"
 
 script:
+  # v0.15.17 — temporizador da Linha HUD. `mode: restart` faz cada valor novo
+  # recomecar a contagem; o update("") nao volta a armar o ciclo (o on_value
+  # so executa com texto nao vazio).
+  - id: hud_linha_limpa
+    mode: restart
+    then:
+      - delay: 45s
+      # o action deste ESPHome e `text.set` (nao `text.set_value`).
+      - text.set:
+          id: hud_linha
+          value: ""
   - id: hud_set
     parameters:
       state: int
@@ -796,6 +807,15 @@ text:
     min_length: 0
     max_length: 60
     initial_value: ""
+    # v0.15.17 — a linha nao fica no ecra a espera de alguem a mandar tirar:
+    # 45 s depois de escrita desaparece sozinha, e uma wake word nova limpa-a
+    # logo (ver voice_assistant.on_start). Cada valor novo reinicia a contagem.
+    on_value:
+      - if:
+          condition:
+            lambda: 'return !x.empty();'
+          then:
+            - script.execute: hud_linha_limpa
 
 # --- DIAGNOSTICO DO WAKE WORD (temporario) ------------------------------------
 # Mostra de 60 em 60s se o motor esta a escutar e se os modelos estao ativos.
@@ -1364,6 +1384,10 @@ voice_assistant:
   volume_multiplier: 1.0
   on_start:
     - logger.log: "Pipeline iniciada"
+    # v0.15.17: a linha de HUD da resposta anterior sai do ecra ao acordar.
+    - text.set:
+        id: hud_linha
+        value: ""
     # v0.15.9: se esta pipeline NAO foi aberta pela janela de continuacao, e uma
     # wake word nova -> a cadeia de "respostas seguidas" recomeca do zero.
     - if:
