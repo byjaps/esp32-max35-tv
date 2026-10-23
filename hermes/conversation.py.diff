@@ -1,0 +1,60 @@
+--- /tmp/base_conversation.py	2026-10-24 00:22:03.679935821 +0100
++++ /home/hermes/homelab/ha-component-patches/hermes/conversation.py	2026-10-23 23:47:37.644312973 +0100
+@@ -30,6 +30,13 @@
+ from homeassistant.core import HomeAssistant
+ from homeassistant.helpers.entity_platform import AddEntitiesCallback
+ 
++from .hw_markers import (
++    PANEL_RULE,
++    SPEECH_FALLBACK,
++    extract_hw_markers,
++    fire_hw_calls,
++    is_panel_device,
++)
+ from .const import (
+     CONF_LOCAL_INTENTS,
+     DEFAULT_LOCAL_INTENTS,
+@@ -624,13 +631,25 @@
+         # Pedido de casa? Com o modo local ligado, o HA resolve-o em
+         # milissegundos em vez de gastar uma volta completa do Hermes
+         # (10-30 s).
++        # Convenção dos marcadores só nos turnos do painel de voz (custa tokens
++        # apenas aí). NUNCA antes do agente local: o prefixo estragaria o
++        # matching de intents e um comando de casa passaria a ir ao Hermes.
++        query_text = text
++        if is_panel_device(self.hass, user_input):
++            query_text = PANEL_RULE + "\n" + text
++            _LOGGER.info(
++                "Convenção HW aplicada ao pedido do painel (device=%s satellite=%s)",
++                getattr(user_input, "device_id", None),
++                getattr(user_input, "satellite_id", None),
++            )
++
+         local_result = await self._try_local_agent(user_input, text)
+         if local_result is not None:
+             return local_result
+ 
+         try:
+             result = await self._bridge.async_send_conversation_query(
+-                text=text,
++                text=query_text,
+                 conversation_id=conversation_id,
+                 language=language,
+             )
+@@ -659,6 +678,16 @@
+         if not response_speech:
+             response_speech = "I processed your request but got no response."
+ 
++        # Marcadores [HW:...]: executar no dispositivo e NUNCA os falar. O texto
++        # é limpo primeiro (rede larga), só se executam os que fazem parse, e o
++        # serviço do HA é despachado sem bloquear a resposta ao TTS.
++        chamadas, response_speech = extract_hw_markers(response_speech)
++        if chamadas:
++            self.hass.async_create_task(fire_hw_calls(self.hass, chamadas))
++            _LOGGER.debug("HW marcadores executados: %s", [c[0] for c in chamadas])
++        if not response_speech:
++            response_speech = SPEECH_FALLBACK
++
+         response = intent.IntentResponse(language=language)
+         response.async_set_speech(response_speech)
+ 

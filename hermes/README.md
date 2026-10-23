@@ -26,6 +26,14 @@ MAX35-TV (ESPHome, this repo)
    → Hermes Agent ↔ HA (voice_stack + home_assistant plugins)
 ```
 
+## Optional: one line of text on screen (local patch)
+
+The agent can write **one line** on the panel and have it stay out of the spoken reply,
+using `[HW:...]` markers. That needs a small patch on this component (`hw_markers.py` +
+three additions to `conversation.py`) — it is **not** upstream, and a HACS update
+overwrites it. Full protocol, install and limits: [`../docs/hud-markers.md`](../docs/hud-markers.md).
+Files: [`hud-markers/hw_markers.py`](hud-markers/hw_markers.py), [`conversation.py.diff`](conversation.py.diff).
+
 ## Install
 
 Follow the author's README. In short:

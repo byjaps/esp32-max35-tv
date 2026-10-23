@@ -32,6 +32,11 @@ repository; the "brain" is Hermes via
   v0.15.5 the screen is minimal: no weekday, no top clock, no date, no battery
   footer — those values are still published as HA sensors, only the pixels went
   away.
+- **Agent-written HUD line**: the agent can put **one line of text on the screen**
+  without saying it out loud — it embeds a `[HW:/display/info:{"text":"..."}]` marker in
+  its reply, the HA conversation component strips it before TTS and writes it to the
+  `Linha HUD` entity. Auto-clears after 45 s and when a new wake word opens the mic.
+  Needs a local patch on the HA component: [`docs/hud-markers.md`](docs/hud-markers.md).
 - **Conversation mode**: after each answer the panel reopens the microphone for
   **7 s**, so follow-up phrases need no wake word. The chain is capped by a
   `number` entity (**10** by default, 0 disables it) — the cap is a safety brake,
@@ -204,6 +209,7 @@ this invite link —
 - [`docs/battery.md`](docs/battery.md) — battery ADC, charge curve, charging
 - [`docs/media-player.md`](docs/media-player.md) — media player, metadata, announcements
 - [`docs/disabled-features.md`](docs/disabled-features.md) — camera / SD / touch
+- [`docs/hud-markers.md`](docs/hud-markers.md) — one line of text on screen, written by the agent, never spoken (needs a small HA component patch)
 - [`docs/troubleshooting.md`](docs/troubleshooting.md) — the hard-won pitfalls
 
 ## License
