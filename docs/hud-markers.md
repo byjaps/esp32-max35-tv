@@ -111,8 +111,27 @@ curl -s -X POST http://homeassistant:8123/api/conversation/process \
 
 The reply must be `Feito.` and the entity must read `TESTE`.
 
-## Limits
+## Limits (enforced below the agent)
 
-- One line, 60 characters; the panel is 480×320 and the ring is small.
-- Numbers are **not** clamped yet: `/light:{"brightness_pct":100}` is honoured at any hour.
-  Limits below the agent are on the roadmap (see the homelab notes), not in this version.
+Safety is not something you ask a language model for. `hw_markers.py` carries a `LIMITES`
+table and a pure `_limitar()` applied right before the service call:
+
+| Route | Field | Day | 23:00-08:00 |
+|---|---|---|---|
+| `/light` | `brightness_pct` | 0-100 | **max 15** |
+| `/volume` | `value` | **max 80** | **max 35** |
+
+- Invalid values (`"alto"`) are dropped with a log line; below-minimum values are raised.
+- `PANEL_RULE` tells the agent the *same* numbers, so it never announces a value the screen
+  will not honour. `teste_hw_markers.py` fails if the two drift apart.
+- The screen is otherwise respected as asked: one line, 60 characters (it is 480×320).
+
+Measured on the real panel (24/10/2026, 01:35): marker asking for 100 % → `light` went
+255 → **38/255 (15 %)**.
+
+## Routes are validated at startup
+
+`validar_rotas(hass)` runs once per process on the first marker and logs a WARNING for every
+entity in `ROTAS` that does not exist. This is the cheap answer to a real failure: after a
+firmware rename, a marker dies silently because the entity id changed (it happened on
+23/10 with `text.mini_tv_linha_hud`).

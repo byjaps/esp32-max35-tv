@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -33,6 +34,56 @@ _HW_LINK = re.compile(
 )
 # Rede de limpeza: apaga QUALQUER coisa com forma de marcador, mesmo inválida.
 _HW_LOOSE = re.compile(r"\[HW:[^\]]*\]")
+
+# ---------------------------------------------------------------------------
+# Limites ABAIXO do agente (princípio «a segurança não se pede ao modelo»).
+# O prompt já diz ao agente estes números (PANEL_RULE); isto é a última linha de
+# defesa, para o caso de ele se esquecer ou de um pedido vir de outro sítio.
+# Mudar aqui e na PANEL_RULE — os dois valores têm de contar a mesma história.
+# ---------------------------------------------------------------------------
+QUIET_START, QUIET_END = 23, 8          # horas locais do HA
+QUIET_LIGHT_MAX = 15                    # % de brilho máximo à noite
+QUIET_VOLUME_MAX = 35                   # % de volume máximo à noite
+DAY_VOLUME_MAX = 80                     # teto de dia (a coluna é pequena)
+
+# (rota, campo) -> (mínimo, máximo de dia, máximo à noite)
+LIMITES: dict[tuple[str, str], tuple[float, float, float]] = {
+    ("/light", "brightness_pct"): (0, 100, QUIET_LIGHT_MAX),
+    ("/volume", "value"): (0, DAY_VOLUME_MAX, QUIET_VOLUME_MAX),
+}
+
+
+def _em_quiet_hours(agora: datetime) -> bool:
+    h = agora.hour
+    return h >= QUIET_START or h < QUIET_END
+
+
+def _limitar(
+    rota: str, params: dict[str, Any], agora: datetime | None = None
+) -> tuple[dict[str, Any], list[str]]:
+    """Corta o que passa dos limites. Devolve (params, cortes). Função pura."""
+    agora = agora or datetime.now()
+    quiet = _em_quiet_hours(agora)
+    cortes: list[str] = []
+    dados = dict(params)
+    for (r, campo), (minimo, max_dia, max_noite) in LIMITES.items():
+        if r != rota or campo not in dados:
+            continue
+        try:
+            valor = float(dados[campo])
+        except (TypeError, ValueError):
+            cortes.append(f"{campo} inválido ({dados[campo]!r}) — descartado")
+            dados.pop(campo)
+            continue
+        teto = max_noite if quiet else max_dia
+        if valor > teto:
+            dados[campo] = int(teto) if float(teto).is_integer() else teto
+            cortes.append(f"{campo} {valor:g}->{teto:g} ({'noite' if quiet else 'dia'})")
+        elif valor < minimo:
+            dados[campo] = minimo
+            cortes.append(f"{campo} {valor:g}->{minimo:g} (mínimo)")
+    return dados, cortes
+
 
 # Texto de recurso quando a resposta era SÓ marcadores (senão o TTS fica mudo).
 SPEECH_FALLBACK = "Feito."
@@ -84,8 +135,38 @@ def extract_hw_markers(texto: str) -> tuple[list[tuple[str, dict[str, Any]]], st
     return chamadas, limpo
 
 
+_rotas_verificadas = False
+
+
+def validar_rotas(hass) -> list[str]:
+    """Confirma que as entidades de ROTAS existem. Uma vez por processo.
+
+    Sem isto, um firmware novo que renomeie uma entidade deixa o marcador a morrer
+    em silêncio (aconteceu a 23/10 com `text.mini_tv_linha_hud`). Não corrige nada:
+    diz o que falta, para se corrigir a tabela.
+    """
+    global _rotas_verificadas
+    faltam: list[str] = []
+    if _rotas_verificadas:
+        return faltam
+    _rotas_verificadas = True
+    for rota, (entidade, _tipo) in ROTAS.items():
+        if hass.states.get(entidade) is None:
+            faltam.append(entidade)
+            _LOGGER.warning(
+                "HW rotas: a entidade %s (%s) não existe — os marcadores dessa rota "
+                "são descartados até a tabela ROTAS ser corrigida",
+                entidade,
+                rota,
+            )
+    if not faltam:
+        _LOGGER.debug("HW rotas: %d rotas verificadas, todas presentes", len(ROTAS))
+    return faltam
+
+
 async def fire_hw_calls(hass, chamadas: list[tuple[str, dict[str, Any]]]) -> None:
     """Dispara as acções. Fire-and-forget: falha de hardware nunca estraga a fala."""
+    validar_rotas(hass)
     for rota, params in chamadas:
         destino = ROTAS.get(rota)
         if destino is None:
@@ -95,6 +176,9 @@ async def fire_hw_calls(hass, chamadas: list[tuple[str, dict[str, Any]]]) -> Non
         if hass.states.get(entidade) is None:
             _LOGGER.warning("HW marcador %s: a entidade %s não existe", rota, entidade)
             continue
+        params, cortes = _limitar(rota, params)
+        for corte in cortes:
+            _LOGGER.info("HW limite aplicado em %s: %s", rota, corte)
         try:
             await _chamar(hass, entidade, tipo, params)
         except Exception as exc:  # noqa: BLE001
@@ -139,7 +223,11 @@ async def _chamar(hass, entidade: str, tipo: str, params: dict[str, Any]) -> Non
 PANEL_RULE = (
     "Convenção do painel de voz: se a resposta tiver de mostrar algo no ecrã, "
     'começa com [HW:/display/info:{"text":"..."}] (máx. 60 caracteres, sem repetir '
-    "o que dizes em voz alta) e depois o texto normal. O marcador não é falado."
+    "o que dizes em voz alta) e depois o texto normal. O marcador não é falado. "
+    "Para o ecrã usa [HW:/light:{\"brightness_pct\":N}] e para a coluna "
+    "[HW:/volume:{\"value\":N}]: brilho no máximo 15 e volume no máximo 35 entre as "
+    f"{QUIET_START}h e as {QUIET_END}h; de dia o volume não passa de {DAY_VOLUME_MAX}. "
+    "Valores acima disso são cortados."
 )
 
 
