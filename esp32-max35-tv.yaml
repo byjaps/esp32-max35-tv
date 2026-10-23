@@ -212,7 +212,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.15.17"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.15.18"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -529,6 +529,11 @@ script:
             num->make_call().set_value(id(fps_user)).perform();
             id(fps_user) = 0.0f;
           }
+          // Fail-safe do anel «a trabalhar»: em espera nao ha ferramenta nenhuma a
+          // correr. Se o plugin morrer a meio do turno, o violeta nao fica preso.
+          if (state == 0 && id(trabalho).state) {
+            id(trabalho).turn_off();
+          }
           id(va_state) = state;
       - component.update: main_display
 
@@ -821,6 +826,19 @@ text:
 # Mostra de 60 em 60s se o motor esta a escutar e se os modelos estao ativos.
 # "modelos OFF" = o HA enviou uma lista vazia em on_set_configuration e
 # desativou-os todos.
+# --- ESTADO «A TRABALHAR» (24/10/2026) --------------------------------------
+# Ligado pelo plugin `painel-trabalho` do Hermes enquanto uma ferramenta corre num
+# pedido que veio do painel. Nao desenha nada sozinho: so muda a cor do anel
+# enquanto `va_state == 2` (a pensar). O plugin desliga-o no fim do turno e o
+# `hud_set` desliga-o sempre que o painel volta a "em espera" (fail-safe).
+switch:
+  - platform: template
+    name: "A Trabalhar"
+    id: trabalho
+    icon: "mdi:hammer-wrench"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+
 interval:
   # --- WATCHDOG DO MEDIA (2 s) ----------------------------------------------
   # Le so globais (barato) e cobre os caminhos que o gatilho do media player
@@ -1526,6 +1544,11 @@ display:
       float vel = 9.0f, pulso = 0.0f;
       if (media)         { cor = Color(0x1E, 0xD7, 0x60); vel = 24.0f; pulso = 0.5f; }
       else if (est == 1) { cor = Color(0x19, 0xF0, 0xD8); vel = 30.0f; pulso = 1.0f; }
+      else if (est == 2 && id(trabalho).state) {
+        // A TRABALHAR (24/10/2026): violeta e rotacao muito rapida — distingue-se
+        // do ambar do "a pensar" sem precisar de texto no ecra.
+        cor = Color(0xB3, 0x6B, 0xFF); vel = 160.0f; pulso = 0.2f;
+      }
       else if (est == 2) { cor = Color(0xFF, 0xB3, 0x00); vel = 96.0f; pulso = 0.4f; }
       else if (est == 3) { cor = Color(0x00, 0xE5, 0xFF); vel = 42.0f; pulso = 0.8f; }
       else if (est == 4) { cor = Color(0xFF, 0x4D, 0x5E); vel = 3.0f;  pulso = 0.0f; }

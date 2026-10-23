@@ -1,0 +1,6 @@
+name: painel-trabalho
+version: "1.0.0"
+description: "Anel «a trabalhar» do painel de voz MAX35-TV: o hook pre_tool_call liga o switch.<painel>_a_trabalhar enquanto uma ferramenta corre num pedido da sessão ha-voice (o firmware pinta o anel de violeta só em va_state==2). Desliga sozinho 3,5 s depois da última ferramenta; o firmware também desliga ao voltar a «em espera». Fail-open: tudo em thread, timeout 2 s, erros engolidos — nunca bloqueia uma chamada de ferramenta."
+author: "Hermes (Joel's homelab)"
+hooks:
+  - pre_tool_call

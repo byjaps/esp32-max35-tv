@@ -140,3 +140,16 @@ Measured on the real panel (24/10/2026, 01:35): marker asking for 100 % → `lig
 entity in `ROTAS` that does not exist. This is the cheap answer to a real failure: after a
 firmware rename, a marker dies silently because the entity id changed (it happened on
 23/10 with `text.mini_tv_linha_hud`).
+
+## Ring colour for "a tool is running" (v0.15.18)
+
+The `voice_assistant` only knows five states; whether the *brain* is running a tool is something
+only Hermes knows. `switch.*_a_trabalhar` (template switch, optimistic, `ALWAYS_OFF`) is turned on
+by the `painel-trabalho` plugin (hook `pre_tool_call`, only in the `ha-voice` session — a Telegram
+tool can run for minutes) and off 3.5 s after the last tool. While `va_state == 2` **and** the
+switch is on, the ring is **violet `0xB36BFF`** at 160 °/s instead of the amber "thinking" ring.
+
+- `post_tool_call` does not receive `session_id`, so the close is a timer, not a counter.
+- The firmware resets the switch when the panel returns to idle — without that, a plugin that dies
+  mid-turn leaves the ring violet forever.
+- The colour is not exported to HA: verify the switch by API, the colour with your eyes.
