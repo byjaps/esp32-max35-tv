@@ -41,15 +41,19 @@ _HW_LOOSE = re.compile(r"\[HW:[^\]]*\]")
 # defesa, para o caso de ele se esquecer ou de um pedido vir de outro sítio.
 # Mudar aqui e na PANEL_RULE — os dois valores têm de contar a mesma história.
 # ---------------------------------------------------------------------------
+# Pisos de usabilidade MEDIDOS pelo Joel no painel real (24/10/2026, 00:45):
+# «o volume mínimo para falar é 60 e o brilho 35; menos que isto fica muito baixo e
+# muito escuro». Abaixo disto o painel é inútil, por isso o piso é garantido sempre —
+# de dia e de noite. Estes números não são gosto pessoal: foram ouvidos e vistos.
 QUIET_START, QUIET_END = 23, 8          # horas locais do HA
-QUIET_LIGHT_MAX = 15                    # % de brilho máximo à noite
-QUIET_VOLUME_MAX = 35                   # % de volume máximo à noite
-DAY_VOLUME_MAX = 80                     # teto de dia (a coluna é pequena)
+LIGHT_MIN, LIGHT_QUIET_MAX = 35, 70     # % de brilho: piso 35, teto nocturno 70
+VOLUME_MIN, VOLUME_QUIET_MAX = 60, 70   # % de volume: piso 60 (senão não se ouve)
+DAY_VOLUME_MAX = 90                     # teto de dia (a coluna é pequena)
 
 # (rota, campo) -> (mínimo, máximo de dia, máximo à noite)
 LIMITES: dict[tuple[str, str], tuple[float, float, float]] = {
-    ("/light", "brightness_pct"): (0, 100, QUIET_LIGHT_MAX),
-    ("/volume", "value"): (0, DAY_VOLUME_MAX, QUIET_VOLUME_MAX),
+    ("/light", "brightness_pct"): (LIGHT_MIN, 100, LIGHT_QUIET_MAX),
+    ("/volume", "value"): (VOLUME_MIN, DAY_VOLUME_MAX, VOLUME_QUIET_MAX),
 }
 
 
@@ -224,10 +228,19 @@ PANEL_RULE = (
     "Convenção do painel de voz: se a resposta tiver de mostrar algo no ecrã, "
     'começa com [HW:/display/info:{"text":"..."}] (máx. 60 caracteres, sem repetir '
     "o que dizes em voz alta) e depois o texto normal. O marcador não é falado. "
-    "Para o ecrã usa [HW:/light:{\"brightness_pct\":N}] e para a coluna "
-    "[HW:/volume:{\"value\":N}]: brilho no máximo 15 e volume no máximo 35 entre as "
-    f"{QUIET_START}h e as {QUIET_END}h; de dia o volume não passa de {DAY_VOLUME_MAX}. "
-    "Valores acima disso são cortados."
+    'Para o ecrã usa [HW:/light:{"brightness_pct":N}] e para a coluna '
+    '[HW:/volume:{"value":N}]: o brilho nunca abaixo de %d e o volume nunca abaixo de %d '
+    "(senão não se vê nem se ouve); à noite (das %dh às %dh) o brilho até %d e o volume "
+    "até %d; de dia o volume até %d. O que sair disto é corrigido."
+    % (
+        LIGHT_MIN,
+        VOLUME_MIN,
+        QUIET_START,
+        QUIET_END,
+        LIGHT_QUIET_MAX,
+        VOLUME_QUIET_MAX,
+        DAY_VOLUME_MAX,
+    )
 )
 
 

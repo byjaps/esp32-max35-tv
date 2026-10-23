@@ -116,10 +116,15 @@ The reply must be `Feito.` and the entity must read `TESTE`.
 Safety is not something you ask a language model for. `hw_markers.py` carries a `LIMITES`
 table and a pure `_limitar()` applied right before the service call:
 
-| Route | Field | Day | 23:00-08:00 |
-|---|---|---|---|
-| `/light` | `brightness_pct` | 0-100 | **max 15** |
-| `/volume` | `value` | **max 80** | **max 35** |
+| Route | Field | Floor (always) | Day max | 23:00-08:00 max |
+|---|---|---|---|---|
+| `/light` | `brightness_pct` | **35** | 100 | 70 |
+| `/volume` | `value` | **60** | 90 | 70 |
+
+The floors are measured, not taste: on the real panel, below 35 % the screen is unreadable and
+below 60 % the speaker is inaudible (24/10/2026). A limit that only cuts downwards, on a device
+that must be seen and heard, is bad design — the first version capped night values at 15/35 with
+no floor and made the panel useless after 23:00.
 
 - Invalid values (`"alto"`) are dropped with a log line; below-minimum values are raised.
 - `PANEL_RULE` tells the agent the *same* numbers, so it never announces a value the screen
