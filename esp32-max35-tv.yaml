@@ -212,7 +212,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.15.15"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.15.16"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -778,6 +778,19 @@ text:
     name: "Titulo do media"
     id: mp_titulo
     icon: "mdi:music-note"
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 60
+    initial_value: ""
+
+# --- LINHA DE HUD (escrita pelo agente via marcador [HW:/display/info:...]) ---
+# O componente `hermes` do HA extrai o marcador da resposta, chama
+# text.set_value nesta entidade e o texto NUNCA e falado. Vazia = nao desenha.
+  - platform: template
+    name: "Linha HUD"
+    id: hud_linha
+    icon: "mdi:message-text"
     optimistic: true
     mode: text
     min_length: 0
@@ -1593,6 +1606,12 @@ display:
         it.printf(258, 156, id(font_small), Color(150, 150, 150), TextAlign::TOP_LEFT, "volume %d%%", (int) (v + 0.5f));
         it.rectangle(258, 186, 200, 10, Color(60, 60, 60));
         it.filled_rectangle(259, 187, (int) (198 * v / 100.0f), 8, Color(0x1E, 0xD7, 0x60));
+        // Linha de HUD (marcador [HW:/display/info]) no ecra de media.
+        std::string linha_m = id(hud_linha).state;
+        if (!linha_m.empty()) {
+          if (linha_m.size() > 14) linha_m = linha_m.substr(0, 13) + ".";
+          it.print(258, 208, id(font_small), Color(0xC8, 0xC8, 0xC8), TextAlign::TOP_LEFT, linha_m.c_str());
+        }
       } else {
         // --- HUD DE VOZ: o anel de estado -----------------------------------
         reactor(240, 152, 118.0f, cor, pulso);
@@ -1619,6 +1638,12 @@ display:
             else if (est == 4) stxt = "ERRO";
             it.print(240, 152, id(font_normal), cor, TextAlign::CENTER, stxt);
           }
+        }
+        // Linha de HUD dentro do anel, por baixo do relogio/estado. Vazia = nada.
+        std::string linha = id(hud_linha).state;
+        if (!linha.empty()) {
+          if (linha.size() > 20) linha = linha.substr(0, 19) + ".";
+          it.print(240, 205, id(font_normal), Color(0xC8, 0xC8, 0xC8), TextAlign::CENTER, linha.c_str());
         }
       }
 
