@@ -212,7 +212,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.15.18"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.16.1"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -232,10 +232,8 @@ esphome:
   on_boot:
     priority: -100
     then:
-      # ECRÃ: arranca o motor de atualizacao do display (ver script ecra_loop).
-      # A prioridade -100 corre depois de todos os setup() (o display ja esta
-      # inicializado), logo o ecra fica vivo desde o arranque.
-      - script.execute: {id: ecra_loop}
+      # ECRÃ: o LVGL desenha-se sozinho; aqui so se aplica o estado inicial.
+      - script.execute: {id: ui_aplica}
       # VOLUME: manda o `number` (guardado entre reinícios). O media player
       # restaura as preferências DELE, que podem ser outras — era daí que vinha
       # um 100% que saturava o ES8311. Alinhar os dois no valor do number.
@@ -410,10 +408,35 @@ binary_sensor:
 # --- ESTADO (HUD) ------------------------------------------------------------
 # 0=em espera 1=a ouvir 2=a pensar 3=a falar 4=erro
 globals:
+  # v0.16.0 — estado aplicado ao ecra LVGL (0 espera .. 7 alarme).
+  - id: ecra_est
+    type: int
+    restore_value: false
+    initial_value: '0'
   - id: va_state
     type: int
     restore_value: no
     initial_value: "0"
+  # 29/10/2026 — segundos que faltam ao proximo temporizador, calculados no
+  # `interval` de 1 s (nao no lambda do ecra) para o desenho ser barato e para
+  # haver um sensor de diagnostico legivel a distancia.
+  - id: contagem_rest
+    type: int
+    restore_value: no
+    initial_value: "-1"
+  # 29/10/2026 — pre-aviso do alarme: o Joel viu o relogio branco durante uns
+  # segundos depois do 0, porque a ordem «timer.finished -> HA -> switch ->
+  # desenho» leva 1-3 s. Marcamos o instante em que faltavam <=2 s e o ecra
+  # passa a desenhar o despertador ate 8 s depois disso (ou ate o switch ligar).
+  # 29/10: o pre-aviso comecou em 2 s e o Joel achou cedo — ficou em 1 s.
+  - id: alarme_pre_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: ecra_alarme
+    type: bool
+    restore_value: no
+    initial_value: "false"
   # Instante (millis) da ultima MUDANCA do va_state. E o que o watchdog do
   # estado usa para saber ha quanto tempo a placa esta presa num estado de voz
   # (ver o interval de 2 s). Sem isto so se via o sintoma: ecra em "a ouvir" ou
@@ -495,6 +518,141 @@ globals:
     initial_value: "0"
 
 script:
+  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL (v0.16.0) -------------------
+  # Estados do desenho do Jarvis:
+  #   0 espera · 1 a ouvir · 2 a pensar · 3 a falar · 4 a tocar · 5 a dormir
+  #   6 sem ligação · 7 alarme do temporizador
+  # `ui_base` põe tudo no estado neutro; cada estado só acrescenta o que muda.
+  # É chamado pelo hud_set (voz), pelo media player, pelo switch do alarme e no
+  # arranque — nunca em ciclo.
+  - id: ui_base
+    then:
+      - lvgl.widget.show: [olho_e, olho_d, boca_sorriso, relogio_small]
+      - lvgl.widget.hide:
+          [relogio_big, olho_fechado_e, olho_fechado_d, x1, x2, x3, x4,
+           boca_circ, boca_triste, onda1, onda2, onda3, ponto1, ponto2, ponto3,
+           sobrancelha_e, sobrancelha_d]
+      - lvgl.animation.stop: [falar, tremer_alarme, pulsar_ondas]
+      - lvgl.widget.update: {id: corpo,    bg_color: 0xEAEFF5, bg_grad_color: 0xC1CAD6}
+      - lvgl.widget.update: {id: ecra,     bg_color: 0x090E15}
+      - lvgl.widget.update: {id: orelha_e, bg_color: 0xCED8E6}
+      - lvgl.widget.update: {id: orelha_d, bg_color: 0xCED8E6}
+      - lvgl.widget.update: {id: ponta,    bg_color: 0xE1FCFF}
+      - lvgl.label.update: {id: legenda, text: "", text_color: 0xFFFFFF}
+
+  # 0 — em espera: relógio grande (canto superior esquerdo), sem legenda
+  - id: ui_espera
+    then:
+      - lvgl.widget.hide: relogio_small
+      - lvgl.widget.show: relogio_big
+
+  # 1 — a ouvir: ondas sonoras a pulsar
+  - id: ui_ouvir
+    then:
+      - lvgl.label.update: {id: legenda, text: "A OUVIR..."}
+      - lvgl.widget.show: [onda1, onda2, onda3, sobrancelha_e, sobrancelha_d]
+      - lvgl.animation.start: pulsar_ondas
+
+  # 2 — a pensar: pontos na diagonal
+  - id: ui_pensar
+    then:
+      - lvgl.label.update: {id: legenda, text: "A PENSAR..."}
+      - lvgl.widget.show: [ponto1, ponto2, ponto3]
+
+  # 3 — a falar: boca animada
+  - id: ui_falar
+    then:
+      - lvgl.label.update: {id: legenda, text: "A FALAR"}
+      - lvgl.widget.hide: boca_sorriso
+      - lvgl.widget.show: boca_circ
+      - lvgl.animation.start: falar
+
+  # 4 — a tocar: olhos fechados e felizes (a legenda leva o título, no tique de 1 s)
+  - id: ui_musica
+    then:
+      - lvgl.widget.hide: [olho_e, olho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
+
+  # 5 — a dormir: tudo escurecido
+  - id: ui_noite
+    then:
+      - lvgl.label.update: {id: legenda, text: "A DORMIR"}
+      - lvgl.widget.hide: [olho_e, olho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
+      - lvgl.widget.update: {id: corpo,    bg_color: 0xB1B4B9, bg_grad_color: 0x979EA7}
+      - lvgl.widget.update: {id: orelha_e, bg_color: 0xAEB4BB}
+      - lvgl.widget.update: {id: orelha_d, bg_color: 0xAEB4BB}
+      - lvgl.widget.update: {id: ponta,    bg_color: 0x3A414B}
+
+  # 6 — sem ligação: olhos em X, boca triste, antena vermelha
+  - id: ui_erro
+    then:
+      - lvgl.label.update: {id: legenda, text: "SEM LIGAÇÃO", text_color: 0xFF4D4D}
+      - lvgl.widget.hide: [olho_e, olho_d, boca_sorriso]
+      - lvgl.widget.show: [x1, x2, x3, x4, boca_triste]
+      - lvgl.widget.update: {id: ponta, bg_color: 0xFF4D4D}
+
+  # 7 — alarme do temporizador: olhos abertos, ondas e a tremer
+  - id: ui_alarme
+    then:
+      - lvgl.label.update: {id: legenda, text: "ALARME", text_color: 0xFF4D4D}
+      - lvgl.widget.hide: boca_sorriso
+      - lvgl.widget.show: [boca_circ, onda1, onda2, onda3]
+      - lvgl.animation.start: [tremer_alarme, pulsar_ondas]
+
+  - id: ui_aplica
+    then:
+      - lambda: |-
+          int est = id(va_state);
+          // O alarme manda em tudo; o media só aparece fora de uma conversa
+          // (o TTS também passa pelo media player — ver o comentário antigo).
+          if (id(alarme_tocar).state) est = 7;
+          else if (id(mp_playing) && est == 0) est = 4;
+          id(ecra_est) = est;
+      - script.execute: ui_base
+      - if:
+          condition:
+            lambda: "return id(ecra_est) == 7;"
+          then:
+            - script.execute: ui_alarme
+          else:
+            - if:
+                condition:
+                  lambda: "return id(ecra_est) == 6;"
+                then:
+                  - script.execute: ui_erro
+                else:
+                  - if:
+                      condition:
+                        lambda: "return id(ecra_est) == 5;"
+                      then:
+                        - script.execute: ui_noite
+                      else:
+                        - if:
+                            condition:
+                              lambda: "return id(ecra_est) == 4;"
+                            then:
+                              - script.execute: ui_musica
+                            else:
+                              - if:
+                                  condition:
+                                    lambda: "return id(ecra_est) == 3;"
+                                  then:
+                                    - script.execute: ui_falar
+                                  else:
+                                    - if:
+                                        condition:
+                                          lambda: "return id(ecra_est) == 2;"
+                                        then:
+                                          - script.execute: ui_pensar
+                                        else:
+                                          - if:
+                                              condition:
+                                                lambda: "return id(ecra_est) == 1;"
+                                              then:
+                                                - script.execute: ui_ouvir
+                                              else:
+                                                - script.execute: ui_espera
   # v0.15.17 — temporizador da Linha HUD. `mode: restart` faz cada valor novo
   # recomecar a contagem; o update("") nao volta a armar o ciclo (o on_value
   # so executa com texto nao vazio).
@@ -535,32 +693,7 @@ script:
             id(trabalho).turn_off();
           }
           id(va_state) = state;
-      - component.update: main_display
-
-  # --- ECRÃ: motor de atualizacao (fps ajustavel em tempo real) --------------
-  # O display esta em `update_interval: never` — quem manda desenhar e isto. O
-  # ritmo vem do `number` "Animação (fps)": da para parar (0) ou subir/baixar
-  # sem recompilar, que e o que permite medir o efeito do SPI da tela no audio
-  # (o barramento I2S e partilhado com o microfone e com a coluna).
-  # Sem ecra ligado nao se desenha nada (poupanca de CPU quando o backlight
-  # esta apagado — o resto do estado continua a ser atualizado a 1 Hz).
-  - id: ecra_loop
-    mode: restart
-    then:
-      - while:
-          condition:
-            lambda: "return true;"
-          then:
-            - if:
-                condition:
-                  light.is_on: screen_light
-                then:
-                  - component.update: main_display
-            - delay: !lambda |-
-                float f = id(anim_fps).state;
-                if (f < 0.5f) return (uint32_t) 1000;
-                if (f > 15.0f) f = 15.0f;
-                return (uint32_t) (1000.0f / f);
+      - script.execute: {id: ui_aplica}
 
   # Devolve o motor de wake word a escuta ASSIM QUE ELE CONSEGUIR.
   # A coluna mantem o barramento I2S enquanto tem audio em buffer e so o larga
@@ -715,7 +848,6 @@ script:
           auto call = id(vol_speaker).make_call();
           call.set_value(v);
           call.perform();
-      - component.update: main_display
 
 # --- VOLUME DA COLUNA --------------------------------------------------------
 # O speaker arranca com volume 1.0 = ganho MAXIMO no ES8311 (satura). Este
@@ -822,6 +954,21 @@ text:
           then:
             - script.execute: hud_linha_limpa
 
+# --- CONTAGEM DO TEMPORIZADOR (29/10/2026) -----------------------------------
+# O HA escreve aqui o **epoch UTC** (segundos) do fim do proximo temporizador;
+# o ecra calcula o que falta a cada frame e desenha por baixo do relogio, em
+# vermelho. Vazio = nao ha temporizador. E epoch e nao «X minutos» de proposito:
+# assim a contagem desce ao segundo no ecra sem o HA escrever a cada segundo.
+  - platform: template
+    name: "Contagem do temporizador (fim)"
+    id: contagem_fim
+    icon: "mdi:timer-outline"
+    optimistic: true
+    mode: text
+    min_length: 0
+    max_length: 12
+    initial_value: ""
+
 # --- DIAGNOSTICO DO WAKE WORD (temporario) ------------------------------------
 # Mostra de 60 em 60s se o motor esta a escutar e se os modelos estao ativos.
 # "modelos OFF" = o HA enviou uma lista vazia em on_set_configuration e
@@ -838,8 +985,102 @@ switch:
     icon: "mdi:hammer-wrench"
     optimistic: true
     restore_mode: ALWAYS_OFF
+  # 29/10/2026 — alarme do temporizador a tocar: o ecra troca o anel normal por
+  # um despertador animado. Ligado/desligado pelo script `temporizador_alarme`
+  # do HA; ALWAYS_OFF no arranque para nunca ficar preso ligado.
+  - platform: template
+    name: "Alarme a tocar"
+    id: alarme_tocar
+    icon: "mdi:alarm"
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - script.execute: {id: ui_aplica}
+    on_turn_off:
+      - script.execute: {id: ui_aplica}
 
 interval:
+  # --- CONTAGEM DO TEMPORIZADOR (1 s) ---------------------------------------
+  - interval: 1s
+    then:
+      # Cara (v0.16.0): o relogio e a contagem do temporizador sao etiquetas
+      # LVGL — atualizam-se aqui, 1x/s. O LVGL so redesenha se o texto mudar e
+      # so a area da etiqueta (uns 60x20 px), nao o ecra todo.
+      - lvgl.label.update:
+          id: relogio_big
+          text: !lambda |-
+            auto t = id(sntp_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            char b[8]; snprintf(b, sizeof(b), "%02d:%02d", t.hour, t.minute);
+            return std::string(b);
+      - lvgl.label.update:
+          id: relogio_small
+          text: !lambda |-
+            auto t = id(sntp_time).now();
+            if (!t.is_valid()) return std::string("--:--");
+            char b[8]; snprintf(b, sizeof(b), "%02d:%02d", t.hour, t.minute);
+            return std::string(b);
+      - lvgl.label.update:
+          id: temporizador
+          text: !lambda |-
+            // contagem_rest e recalculado aqui no lambda de baixo; usamos o
+            // valor do tique anterior (1 s de atraso maximo, invisivel).
+            int r = id(contagem_rest);
+            if (r < 0) return std::string("");
+            char b[16];
+            if (r >= 3600) snprintf(b, sizeof(b), "%d:%02d:%02d", r / 3600, (r % 3600) / 60, r % 60);
+            else           snprintf(b, sizeof(b), "%d:%02d", (r / 60) % 60, r % 60);
+            return std::string(b);
+      - if:
+          condition:
+            lambda: "return id(va_state) == 0 && !id(mp_playing) && !id(alarme_tocar).state;"
+          then:
+            - lvgl.widget.show: relogio_big
+            - lvgl.widget.hide: relogio_small
+          else:
+            - lvgl.widget.hide: relogio_big
+            - lvgl.widget.show: relogio_small
+      # Legenda do media: «A TOCAR · <titulo>» (o titulo vem do HA)
+      - if:
+          condition:
+            lambda: "return id(mp_playing) && id(va_state) == 0 && !id(alarme_tocar).state;"
+          then:
+            - lvgl.label.update:
+                id: legenda
+                text: !lambda |-
+                  std::string t = id(mp_titulo).state;
+                  if (t.empty()) return std::string("A TOCAR");
+                  return "A TOCAR · " + t;
+      - lambda: |-
+          auto t = id(sntp_time).now();
+          std::string s = id(contagem_fim).state;
+          int r = -1;
+          if (!s.empty() && t.is_valid()) {
+            long rest = atol(s.c_str()) - (long) t.timestamp;
+            if (rest >= 0 && rest < 43200) r = (int) rest;   // ate 12 h
+          }
+          id(contagem_rest) = r;
+
+          // Pre-aviso do despertador (ver comentario nos globals).
+          if (r >= 0 && r <= 1) id(alarme_pre_ms) = millis() ? millis() : 1;   // 1 s (o Joel achou 2 s cedo)
+          bool pre = id(alarme_pre_ms) != 0 && (millis() - id(alarme_pre_ms) < 8000);
+          if (id(alarme_tocar).state) id(alarme_pre_ms) = 0;   // ja toca: manda o switch
+          id(ecra_alarme) = id(alarme_tocar).state || pre;
+          // O diagnostico so publica enquanto ha temporizador (e uma vez ao
+          // voltar a «sem temporizador»): 1 estado/s 24 h por dia era lixo no
+          // recorder do HA — 86 mil linhas por dia por nada.
+          static bool dbg_ativo = false;
+          char b[96];
+          if (r >= 0 || id(ecra_alarme) || id(alarme_tocar).state) {
+            snprintf(b, sizeof(b), "rest=%d est=%d mp=%d al=%d ecra=%d fim=%s", r, id(va_state),
+                     (int) id(mp_playing), (int) id(alarme_tocar).state, (int) id(ecra_alarme), s.c_str());
+            id(dbg_contagem).publish_state(b);
+            dbg_ativo = true;
+          } else if (dbg_ativo) {
+            id(dbg_contagem).publish_state("sem temporizador");
+            dbg_ativo = false;
+          }
+
   # --- WATCHDOG DO MEDIA (2 s) ----------------------------------------------
   # Le so globais (barato) e cobre os caminhos que o gatilho do media player
   # NAO apanha.
@@ -1516,189 +1757,489 @@ display:
     cs_pin: GPIO5
     dc_pin: GPIO47
     rotation: ${rotate_display}
-    # ⚠️ `never`: quem manda desenhar e o script `ecra_loop` (ritmo vindo do
-    # `number` "Animação (fps)"). Com um `update_interval` fixo, afinar a
-    # fluidez custaria uma compilacao+OTA de ~10 min por tentativa.
+    # v0.16.0 (29/10/2026) — O ECRÃ PASSOU A SER LVGL.
+    # Porquê: com o desenho por lambda cada atualizacao mandava o frame INTEIRO
+    # (307 KB) para o painel mipi_spi: ~150 ms medidos, ou seja 4-6 fps. Uma cara
+    # que se mexe a 5 fps le-se como avaria. O LVGL so redesenha e manda as
+    # ZONAS QUE MUDARAM (dois olhos = ~10 KB), o que da animacao fluida e gasta
+    # MENOS barramento do que o desenho antigo.
+    # `update_interval: never` + `auto_clear_enabled: false` sao obrigatorios:
+    # quem manda desenhar e o proprio LVGL (ver componente `lvgl`).
     update_interval: never
-    lambda: |-
-      it.fill(Color(0, 0, 0));
+    auto_clear_enabled: false
 
-      // --- tempo: a animacao avanca em graus/segundo, nao por frame ---------
-      static uint32_t ecra_ultimo_ms = 0;
-      uint32_t ecra_agora = millis();
-      float dt = (ecra_agora - ecra_ultimo_ms) / 1000.0f;
-      ecra_ultimo_ms = ecra_agora;
-      if (dt < 0.0f || dt > 1.0f) dt = 1.0f;
-
-      // --- estado: cor, velocidade da rotacao e pulso -----------------------
-      // O ecra de media exige `est == 0`: o TTS do assistente passa pelo
-      // announcement_pipeline deste media player (`voice_assistant: TTS stream
-      // start` -> `speaker_media_player: State changed to ANNOUNCING`), logo
-      // `mp_playing` fica a true durante CADA resposta falada e, sem a guarda,
-      // o ecra trocava para "A TOCAR" a meio da conversa (visto pelo autor).
-      int est = id(va_state);
-      bool media = id(mp_playing) && est == 0;
-      // EM ESPERA: BRANCO (pedido do autor, 26/09 — era o mesmo ciano do "A FALAR"
-      // e no painel nao se distinguiam; agora o ciano e' so do "A FALAR").
-      Color cor(0xFF, 0xFF, 0xFF);
-      float vel = 9.0f, pulso = 0.0f;
-      if (media)         { cor = Color(0x1E, 0xD7, 0x60); vel = 24.0f; pulso = 0.5f; }
-      else if (est == 1) { cor = Color(0x19, 0xF0, 0xD8); vel = 30.0f; pulso = 1.0f; }
-      else if (est == 2 && id(trabalho).state) {
-        // A TRABALHAR (24/10/2026): violeta e rotacao muito rapida — distingue-se
-        // do ambar do "a pensar" sem precisar de texto no ecra.
-        cor = Color(0xB3, 0x6B, 0xFF); vel = 160.0f; pulso = 0.2f;
-      }
-      else if (est == 2) { cor = Color(0xFF, 0xB3, 0x00); vel = 96.0f; pulso = 0.4f; }
-      else if (est == 3) { cor = Color(0x00, 0xE5, 0xFF); vel = 42.0f; pulso = 0.8f; }
-      else if (est == 4) { cor = Color(0xFF, 0x4D, 0x5E); vel = 3.0f;  pulso = 0.0f; }
-
-      id(rot_deg) += vel * dt;
-      if (id(rot_deg) >= 36000.0f) id(rot_deg) -= 36000.0f;
-      float rot = id(rot_deg);
-
-      // --- helpers ----------------------------------------------------------
-      // O ESPHome nao tem alpha: o que no canvas do jarvis_ai era `globalAlpha`
-      // e misturado aqui com o PRETO do fundo antes de escrever o pixel (mesmo
-      // resultado, porque o fundo e preto).
-      auto mist = [](Color c, float a) {
-        return Color((uint8_t) (c.r * a), (uint8_t) (c.g * a), (uint8_t) (c.b * a));
-      };
-      // Segmento de anel entre r1 e r2, de a0 a a1 graus (0 = topo, horario).
-      // Em quads de ~5 graus, 2 triangulos cada (nao ha primitiva de quadrilatero).
-      auto seg = [&](int ccx, int ccy, float r1, float r2, float a0, float a1, Color c) {
-        int n = (int) ((a1 - a0) / 5.0f);
-        if (n < 1) n = 1;
-        for (int i = 0; i < n; i++) {
-          float s = (a0 + (a1 - a0) * i / n - 90.0f) * 0.0174533f;
-          float e = (a0 + (a1 - a0) * (i + 1) / n - 90.0f) * 0.0174533f;
-          int x1 = ccx + (int) (cosf(s) * r2), y1 = ccy + (int) (sinf(s) * r2);
-          int x2 = ccx + (int) (cosf(e) * r2), y2 = ccy + (int) (sinf(e) * r2);
-          int x3 = ccx + (int) (cosf(e) * r1), y3 = ccy + (int) (sinf(e) * r1);
-          int x4 = ccx + (int) (cosf(s) * r1), y4 = ccy + (int) (sinf(s) * r1);
-          it.filled_triangle(x1, y1, x2, y2, x3, y3, c);
-          it.filled_triangle(x1, y1, x3, y3, x4, y4, c);
-        }
-      };
-      // Anel tracejado: dash/gap em pixeis de arco, `off` desloca o padrao —
-      // e isto que faz a rotacao (nao existe primitiva de arco tracejado).
-      auto tracejado = [&](int ccx, int ccy, float r, float w, Color c, float dash, float gap, float off) {
-        float circ = 6.2831853f * r;
-        float per = dash + gap;
-        float px = -fmodf(off, per);
-        if (px > 0.0f) px -= per;
-        while (px < circ) {
-          float d0 = px > 0.0f ? px : 0.0f;
-          float d1 = (px + dash) < circ ? (px + dash) : circ;
-          if (d1 > d0) {
-            seg(ccx, ccy, r - w * 0.5f, r + w * 0.5f, d0 / circ * 360.0f, d1 / circ * 360.0f, c);
-          }
-          px += per;
-        }
-      };
-      // O anel: exterior solido + 3 tracejados a rodar + 60 marcas radiais +
-      // nucleo. Raios do canvas original, relativos a `base`.
-      auto reactor = [&](int ccx, int ccy, float base, Color c, float pulso) {
-        float b = base * (1.0f + 0.012f * (1.0f + pulso * 3.0f) * sinf(ecra_agora / 300.0f));
-        it.filled_ring(ccx, ccy, (int) (b - 1.5f), (int) (b + 1.5f), mist(c, 0.90f));
-        tracejado(ccx, ccy, b * 0.86f, 2.0f, mist(c, 0.45f), 40.0f, 18.0f, rot * 2.0f);
-        tracejado(ccx, ccy, b * 0.72f, 5.0f, mist(c, 0.25f), 4.0f, 10.0f, -rot * 3.0f);
-        tracejado(ccx, ccy, b * 0.58f, 2.0f, mist(c, 0.60f), 90.0f, 40.0f, rot * 1.2f);
-        for (int i = 0; i < 60; i++) {
-          float a = (i / 60.0f) * 6.2831853f + rot / 180.0f;
-          float r1 = b * 1.06f, r2 = b * (i % 5 == 0 ? 1.12f : 1.09f);
-          it.line(ccx + (int) (cosf(a) * r1), ccy + (int) (sinf(a) * r1),
-                  ccx + (int) (cosf(a) * r2), ccy + (int) (sinf(a) * r2),
-                  mist(c, i % 5 == 0 ? 0.80f : 0.30f));
-        }
-        // Nucleo: nao ha gradiente radial nem blur no ESPHome — aproxima-se com
-        // circulos concentricos, do maior/apagado para o menor/brilhante.
-        for (int i = 0; i < 10; i++) {
-          float f = i / 10.0f;
-          it.filled_circle(ccx, ccy, (int) (b * 0.42f * (1.0f - f)),
-                           mist(c, 0.05f + 0.30f * powf(f, 1.6f)));
-        }
-      };
-
-      // --- relogio: a UNICA informacao fora do anel (pedido do autor, 26/09) --
-      // O ecra ficou mais limpo: sairam o dia da semana, a data, a hora do topo e
-      // a percentagem da bateria do rodape. O relogio desceu para o CENTRO do
-      // anel, no lugar do "EM ESPERA" (ver o HUD de voz mais abaixo). A hora
-      // continua a vir do sntp. Os sensores de bateria/uptime continuam no HA —
-      // so sairam do ECRÃ. Para voltar atras: o caminho seguro e' gravar o
-      // binario da versao anterior, que fica no NAS em
-      // Master/Hermes/esp32-max35-tv/historico/ (max35tv-v0.15.4-2026.9.0-ota.bin);
-      // refazer isto a mao e' repor o bloco de desenho descrito no topo deste
-      // ficheiro (v0.15.5).
-      auto agora_t = id(sntp_time).now();
-
-      if (media) {
-        // --- ECRÃ DE MEDIA: o anel passa a mostrar o VOLUME -----------------
-        int ccx = 130, ccy = 160;
-        float base = 92.0f;
-        float v = id(vol_pct);
-        if (v < 0.0f) v = 0.0f;
-        if (v > 100.0f) v = 100.0f;
-        reactor(ccx, ccy, base, cor, 0.5f);
-        // Arco cheio do volume por cima do anel (0 = topo, sentido horario).
-        seg(ccx, ccy, base * 0.86f - 3.0f, base * 0.86f + 3.0f, 0.0f, 360.0f * v / 100.0f,
-            Color(0x3C, 0xFF, 0x8C));
-        it.printf(ccx, ccy, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (v + 0.5f));
-        // Coluna da direita: estado, titulo (escrito pelo HA) e volume.
-        it.print(258, 78, id(font_normal), Color(0x1E, 0xD7, 0x60), TextAlign::TOP_LEFT, "A TOCAR");
-        std::string titulo = id(mp_titulo).state;
-        if (titulo.empty()) titulo = "Radio / Musica";
-        if (titulo.size() > 18) titulo = titulo.substr(0, 17) + ".";
-        it.print(258, 118, id(font_normal), Color(255, 255, 255), TextAlign::TOP_LEFT, titulo.c_str());
-        it.printf(258, 156, id(font_small), Color(150, 150, 150), TextAlign::TOP_LEFT, "volume %d%%", (int) (v + 0.5f));
-        it.rectangle(258, 186, 200, 10, Color(60, 60, 60));
-        it.filled_rectangle(259, 187, (int) (198 * v / 100.0f), 8, Color(0x1E, 0xD7, 0x60));
-        // Linha de HUD (marcador [HW:/display/info]) no ecra de media.
-        std::string linha_m = id(hud_linha).state;
-        if (!linha_m.empty()) {
-          if (linha_m.size() > 14) linha_m = linha_m.substr(0, 13) + ".";
-          it.print(258, 208, id(font_small), Color(0xC8, 0xC8, 0xC8), TextAlign::TOP_LEFT, linha_m.c_str());
-        }
-      } else {
-        // --- HUD DE VOZ: o anel de estado -----------------------------------
-        reactor(240, 152, 118.0f, cor, pulso);
-        // Aviso de volume durante 1,5 s depois de um clique no botao: sem isto
-        // um clique para mexer no volume nao dava retorno NENHUM quando nao ha
-        // media a tocar (com media, o ecra de media ja mostra o volume).
-        if (millis() < id(vol_aviso_ms)) {
-          float vv = id(vol_pct);
-          if (vv < 0.0f) vv = 0.0f;
-          if (vv > 100.0f) vv = 100.0f;
-          it.printf(240, 152, id(font_med), Color(0x3C, 0xFF, 0x8C), TextAlign::CENTER, "%d%%", (int) (vv + 0.5f));
-        } else {
-          if (est == 0) {
-            // Em espera o CENTRO mostra as HORAS, em branco (pedido do autor,
-            // 26/09): o "EM ESPERA" saiu e o relogio que estava no topo desceu
-            // para aqui. font_med (40 px) porque o centro do anel e' largo.
-            if (agora_t.is_valid()) {
-              it.strftime(240, 152, id(font_med), Color(0xFF, 0xFF, 0xFF), TextAlign::CENTER, "%H:%M", agora_t);
-            }
-          } else {
-            const char *stxt = "A OUVIR";
-            if (est == 2)      stxt = "A PENSAR";
-            else if (est == 3) stxt = "A FALAR";
-            else if (est == 4) stxt = "ERRO";
-            it.print(240, 152, id(font_normal), cor, TextAlign::CENTER, stxt);
-          }
-        }
-        // Linha de HUD dentro do anel, por baixo do relogio/estado. Vazia = nada.
-        std::string linha = id(hud_linha).state;
-        if (!linha.empty()) {
-          if (linha.size() > 20) linha = linha.substr(0, 19) + ".";
-          it.print(240, 205, id(font_normal), Color(0xC8, 0xC8, 0xC8), TextAlign::CENTER, linha.c_str());
-        }
-      }
-
-      // --- rodape: SAIRAM a data e a bateria (pedido do autor, 26/09: ecra mais
-      // clean). O valor da bateria continua a chegar ao HA pelo sensor
-      // `Bateria` (e ha o gestor de bateria do painel a vigia-lo) — so deixou
-      // de ser desenhado aqui. Para repor, era um `it.printf(470, 292, ...)`
-      // com id(battery_percentage).state.
+# --- CARA DO ROBÔ (LVGL) -----------------------------------------------------
+# Desenho do Jarvis (mockups em Agentes/Jarvis/mockups-cara-2026-10-29 do cofre).
+# Todas as coordenadas foram MEDIDAS nos PNG (mede_mockup.py, componentes conexas
+# por cor) e o preview em PIL (preview_face.py) usa exatamente os mesmos valores —
+# se um dia a cara mudar, muda-se primeiro o preview e só depois isto.
+#
+# Estrutura:
+#   pagina (480x320, preto)
+#     robo        — grupo que respira/treme (mover ESTE, nunca os filhos)
+#       antena, ponta, orelha_e, orelha_d, corpo, ecra
+#       olho_e, olho_d (+ reflexos)      estados normais
+#       olho_fechado_e/d                 a dormir / a tocar
+#       olho_x_* (4 barras)              sem ligacao
+#       boca_bar / boca_circ / boca_triste
+#     ondas (arcos)  quando ouve ou no alarme
+#     pontos (3 circulos) quando pensa
+#     relogio_big / relogio_small / legenda / temporizador
+lvgl:
+  id: lv
+  color_depth: 16
+  # 25% (77 KB) fica em RAM interna quando cabe, que e mais rapida que a PSRAM.
+  buffer_size: 25%
+  default_font: font_normal
+  log_level: WARN
+  widgets:
+    - obj:
+        id: pagina
+        width: 480
+        height: 320
+        x: 0
+        y: 0
+        pad_all: 0
+        border_width: 0
+        radius: 0
+        bg_color: 0x000000
+        scrollable: false
+        widgets:
+          - obj:
+              id: robo
+              x: 0
+              y: 0
+              width: 480
+              height: 320
+              pad_all: 0
+              border_width: 0
+              bg_opa: TRANSP
+              scrollable: false
+              widgets:
+                # antena (por tras do corpo)
+                - obj:
+                    id: antena
+                    x: 238
+                    y: 40
+                    width: 5
+                    height: 37
+                    radius: 2
+                    border_width: 0
+                    bg_color: 0x99AFBE
+                - obj:
+                    id: ponta
+                    x: 231
+                    y: 22
+                    width: 19
+                    height: 19
+                    radius: 9
+                    border_width: 0
+                    bg_color: 0xE1FCFF
+                # orelhas
+                - obj:
+                    id: orelha_e
+                    x: 104
+                    y: 178
+                    width: 16
+                    height: 47
+                    radius: 8
+                    border_width: 0
+                    bg_color: 0xCED8E6
+                - obj:
+                    id: orelha_d
+                    x: 361
+                    y: 178
+                    width: 16
+                    height: 47
+                    radius: 8
+                    border_width: 0
+                    bg_color: 0xCED8E6
+                # corpo + ecra
+                - obj:
+                    id: corpo
+                    x: 122
+                    y: 77
+                    width: 237
+                    height: 207
+                    # 77 e o raio medido (squircle, nao canto arredondado):
+                    # ajuste de circulo com erro <1 px em 13 pontos da aresta.
+                    radius: 77
+                    border_width: 0
+                    bg_color: 0xEAEFF5
+                    bg_grad_color: 0xC1CAD6
+                    bg_grad_dir: VER
+                - obj:
+                    id: ecra
+                    x: 150
+                    y: 122
+                    width: 181
+                    height: 131
+                    radius: 57
+                    border_width: 1
+                    border_color: 0x263444
+                    bg_color: 0x090E15
+                    widgets:
+                      # --- olhos redondos (espera, ouvir, pensar, falar, alarme)
+                      - obj:
+                          id: olho_e
+                          x: 29
+                          y: 37
+                          width: 47
+                          height: 55
+                          radius: 50%
+                          border_width: 0
+                          bg_color: 0x40E0FF
+                          widgets:
+                            - obj:
+                                id: reflexo_e
+                                x: 7
+                                y: 6
+                                width: 33
+                                height: 21
+                                radius: 10
+                                border_width: 0
+                                bg_color: 0xFFFFFF
+                      - obj:
+                          id: olho_d
+                          x: 105
+                          y: 37
+                          width: 47
+                          height: 55
+                          radius: 50%
+                          border_width: 0
+                          bg_color: 0x40E0FF
+                          widgets:
+                            - obj:
+                                id: reflexo_d
+                                x: 7
+                                y: 6
+                                width: 33
+                                height: 21
+                                radius: 10
+                                border_width: 0
+                                bg_color: 0xFFFFFF
+                      # --- olhos fechados (a dormir / a tocar)
+                      - obj:
+                          id: olho_fechado_e
+                          x: 29
+                          y: 61
+                          width: 47
+                          height: 7
+                          radius: 3
+                          border_width: 0
+                          bg_color: 0x40E0FF
+                          hidden: true
+                      - obj:
+                          id: olho_fechado_d
+                          x: 105
+                          y: 61
+                          width: 47
+                          height: 7
+                          radius: 3
+                          border_width: 0
+                          bg_color: 0x40E0FF
+                          hidden: true
+                      # --- olho em X (sem ligacao): 4 barras inclinadas
+                      - obj:
+                          id: x1
+                          x: 42
+                          y: 55
+                          width: 7
+                          height: 30
+                          radius: 2
+                          border_width: 0
+                          bg_color: 0xFF4D4D
+                          hidden: true
+                          transform_rotation: 45deg
+                      - obj:
+                          id: x2
+                          x: 42
+                          y: 55
+                          width: 7
+                          height: 30
+                          radius: 2
+                          border_width: 0
+                          bg_color: 0xFF4D4D
+                          hidden: true
+                          transform_rotation: 315deg
+                      - obj:
+                          id: x3
+                          x: 118
+                          y: 55
+                          width: 7
+                          height: 30
+                          radius: 2
+                          border_width: 0
+                          bg_color: 0xFF4D4D
+                          hidden: true
+                          transform_rotation: 45deg
+                      - obj:
+                          id: x4
+                          x: 118
+                          y: 55
+                          width: 7
+                          height: 30
+                          radius: 2
+                          border_width: 0
+                          bg_color: 0xFF4D4D
+                          hidden: true
+                          transform_rotation: 315deg
+                      # --- sobrancelhas (so no estado "a ouvir")
+                      - line:
+                          id: sobrancelha_e
+                          x: 32
+                          y: 19
+                          width: 37
+                          height: 9
+                          points:
+                            - 0, 9
+                            - 18, 0
+                            - 37, 9
+                          line_width: 4
+                          line_color: 0x40E0FF
+                          line_rounded: true
+                          hidden: true
+                      - line:
+                          id: sobrancelha_d
+                          x: 108
+                          y: 19
+                          width: 37
+                          height: 9
+                          points:
+                            - 0, 9
+                            - 18, 0
+                            - 37, 9
+                          line_width: 4
+                          line_color: 0x40E0FF
+                          line_rounded: true
+                          hidden: true
+                      # --- bocas
+                      # 29/10: era um `arc` e no painel saiu a CINZENTO (o
+                      # `arc_color` nao pega) e o alarme mostrava um quadro a
+                      # frente da cara (as 3 ondas em arco). Trocado por `line`,
+                      # que respeita a cor e nao desenha caixa nenhuma.
+                      - line:
+                          id: boca_sorriso
+                          x: 68
+                          y: 112
+                          width: 45
+                          height: 13
+                          points:
+                            - 0, 0
+                            - 22, 12
+                            - 45, 0
+                          line_width: 6
+                          line_color: 0x40E0FF
+                          line_rounded: true
+                      - obj:
+                          id: boca_circ
+                          x: 76
+                          y: 100
+                          width: 29
+                          height: 25
+                          radius: 50%
+                          border_width: 0
+                          bg_color: 0x40E0FF
+                          transform_width: 100%
+                          transform_height: 100%
+                          transform_pivot_y: 100%
+                          hidden: true
+                          widgets:
+                            - obj:
+                                id: boca_furo
+                                x: 11
+                                y: 12
+                                width: 7
+                                height: 11
+                                radius: 50%
+                                border_width: 0
+                                bg_color: 0x090E15
+                      - line:
+                          id: boca_triste
+                          x: 68
+                          y: 104
+                          width: 45
+                          height: 13
+                          points:
+                            - 0, 12
+                            - 22, 0
+                            - 45, 12
+                          line_width: 5
+                          line_color: 0xFF4D4D
+                          line_rounded: true
+                          hidden: true
+          # --- ondas sonoras (ouvir / alarme)
+          - line:
+              id: onda1
+              x: 418
+              y: 181
+              width: 10
+              height: 16
+              points:
+                - 0, 0
+                - 9, 8
+                - 0, 16
+              line_width: 3
+              line_color: 0x40E0FF
+              line_rounded: true
+              hidden: true
+          - line:
+              id: onda2
+              x: 412
+              y: 173
+              width: 12
+              height: 32
+              points:
+                - 0, 0
+                - 11, 16
+                - 0, 32
+              line_width: 3
+              line_color: 0x40E0FF
+              line_rounded: true
+              hidden: true
+          - line:
+              id: onda3
+              x: 406
+              y: 165
+              width: 14
+              height: 48
+              points:
+                - 0, 0
+                - 13, 24
+                - 0, 48
+              line_width: 3
+              line_color: 0x40E0FF
+              line_rounded: true
+              hidden: true
+          # --- pontos de pensamento
+          - obj:
+              id: ponto1
+              x: 382
+              y: 116
+              width: 16
+              height: 16
+              radius: 50%
+              border_width: 0
+              bg_color: 0x40E0FF
+              hidden: true
+          - obj:
+              id: ponto2
+              x: 408
+              y: 98
+              width: 14
+              height: 14
+              radius: 50%
+              border_width: 0
+              bg_color: 0x40E0FF
+              hidden: true
+          - obj:
+              id: ponto3
+              x: 430
+              y: 82
+              width: 12
+              height: 12
+              radius: 50%
+              border_width: 0
+              bg_color: 0x40E0FF
+              hidden: true
+          # --- texto
+          - label:
+              id: relogio_big
+              x: 16
+              y: 4
+              text: "00:00"
+              text_font: font_med
+              text_color: 0xFFFFFF
+          - label:
+              id: relogio_small
+              x: 15
+              y: 13
+              text: "00:00"
+              text_font: font_small
+              text_color: 0x96A8BE
+              hidden: true
+          - label:
+              id: legenda
+              x: 0
+              y: 293
+              width: 480
+              text: ""
+              text_font: font_small
+              text_color: 0x96A8BE
+              text_align: CENTER
+          - label:
+              id: temporizador
+              x: 0
+              y: 10
+              width: 466
+              text: ""
+              text_font: font_small
+              text_color: 0xFF4D4D
+              text_align: RIGHT
+  animations:
+    # respiracao: sobe 3 px e volta (4 s)
+    - id: respirar
+      duration: 4s
+      auto_start: true
+      loop: true
+      timing: ease_in_out
+      widgets:
+        - id: robo
+          y:
+            from: 0
+            to: -3
+    # ponta da antena a pulsar
+    - id: pulso_antena
+      duration: 2500ms
+      auto_start: true
+      loop: true
+      timing: round_trip
+      widgets:
+        - id: ponta
+          bg_opa:
+            from: 100%
+            to: 30%
+    # boca a falar (arranca no estado A FALAR)
+    - id: falar
+      duration: 260ms
+      loop: true
+      timing: round_trip
+      widgets:
+        # `height` nao e animavel no LVGL do ESPHome (so min/max_height e as
+        # transform_*): a boca abre e fecha por transform_height, com o pivo em
+        # baixo para crescer para cima. Medido a 29/10 com o `esphome config`.
+        - id: boca_circ
+          transform_height:
+            from: 55%
+            to: 100%
+    # alarme: tremer a esquerda/direita
+    - id: tremer_alarme
+      duration: 160ms
+      loop: true
+      timing: round_trip
+      widgets:
+        - id: robo
+          x:
+            from: -6
+            to: 6
+    # ondas a pulsar enquanto ouve
+    - id: pulsar_ondas
+      duration: 900ms
+      loop: true
+      timing: round_trip
+      widgets:
+        - id: onda1
+          bg_opa:
+            from: 100%
+            to: 25%
+        - id: onda2
+          bg_opa:
+            from: 60%
+            to: 15%
+        - id: onda3
+          bg_opa:
+            from: 35%
+            to: 5%
 
 # NOTA (12/09/2026): esta revisão da placa NÃO tem touchscreen — o GT911 não
 # existe/ não responde e a config oficial do fabricante também não o define.
@@ -1778,6 +2319,12 @@ debug:
   update_interval: 60s
 
 text_sensor:
+  # 29/10/2026 — diagnostico da contagem do temporizador: fim/agora/rest tal
+  # como o firmware os ve. E o primeiro sitio a olhar se o ecra nao mostrar nada.
+  - platform: template
+    name: "Depuracao contagem"
+    id: dbg_contagem
+    icon: "mdi:bug"
   # Diagnostico: porque reiniciou a ultima vez (brownout / watchdog / panic /
   # software). Adicionado para investigar os reinicios do build 2026.9.0.
   - platform: debug
