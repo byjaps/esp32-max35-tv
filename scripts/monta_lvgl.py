@@ -12,7 +12,7 @@ DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
 SCRATCH = os.path.expanduser("~/.hermes/cache/scratch")
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.16.3"', 1)
+src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.6"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")
@@ -49,11 +49,26 @@ src = src[:i_disp + 1] + display_novo + bloco_lvgl + "\n" + src[i_nota:]
 # ------------------------------------------------- 2. scripts da cara (topo)
 scr = open(os.path.join(SCRATCH, "bloco_ecra_scripts.yaml"), encoding="utf-8").read()
 assert src.count("\nscript:\n") == 1
+# --- GLIFOS: o "·" do titulo (Artista · Titulo) nao existia nas fontes e saia
+# como retangulo vazio no meio do nome da musica. Acrescentados tambem os que
+# aparecem em nomes reais de musicas/estacoes.
+old_small = '    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"'
+new_small = '    glyphs: " %°·–&\'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"'
+assert src.count(old_small) == 2, ("glyphs font_small/normal: esperava 2", src.count(old_small))
+src = src.replace(old_small, new_small)
 src = src.replace("\nscript:\n", "\nscript:\n" + scr, 1)
+# Diagnostico: mostrar o estado do ECRA (ecra_est) alem do va_state.
+src = src.replace('"rest=%d est=%d mp=%d al=%d ecra=%d fim=%s"',
+                  '"rest=%d est=%d mp=%d al=%d ecra=%d ec=%d fim=%s"', 1)
+src = src.replace("(int) id(mp_playing), (int) id(alarme_tocar).state, (int) id(ecra_alarme), s.c_str());",
+                  "(int) id(mp_playing), (int) id(alarme_tocar).state, (int) id(ecra_alarme), (int) id(ecra_est), s.c_str());", 1)
+
 
 # ------------------------------------------------- 3. global do estado da cara
 assert src.count("  - id: va_state\n") == 1
 src = src.replace("  - id: va_state\n",
+                  "  # v0.17.0 — trava as cadeias on_stop enquanto se mudam estados.\n"
+                  "  - id: anim_ok\n    type: bool\n    restore_value: false\n    initial_value: 'true'\n"
                   "  # v0.16.3 — instante em que o alarme comecou (rede de seguranca).\n"
                   "  - id: alarme_ms\n    type: uint32_t\n    restore_value: false\n    initial_value: '0'\n"
                   "  # v0.16.0 — estado aplicado ao ecra LVGL (0 espera .. 7 alarme).\n"
@@ -76,6 +91,33 @@ new_boot = """      # ECRÃ: o LVGL desenha-se sozinho; aqui so se aplica o esta
 """
 assert src.count(old_boot) == 1
 src = src.replace(old_boot, new_boot, 1)
+# --- ganchos do ecra no media player (v0.17.3) -----------------------------
+# Sem isto o ecra nunca entrava em "a tocar": o ui_aplica so corria quando o
+# HUD/estado de voz mudava, e a musica ficava em espera sem notas.
+# v0.17.4 — o `on_play` do speaker media player nao dispara sempre (o
+# `on_turn_on` sim, e e ele que arranca o mp_stop_wake): e ai que se aplica o
+# estado do ecra, senao a musica ficava no ecra de espera.
+old_sw = '      - lambda: "id(mp_playing) = true; id(mp_armado_ms) = millis();"'
+new_sw = ('      - lambda: "id(mp_playing) = true; id(mp_armado_ms) = millis();"\n'
+          '      - script.execute: {id: ui_aplica}')
+assert src.count(old_sw) == 1, ("mp_stop_wake: ancora nao encontrada", src.count(old_sw))
+src = src.replace(old_sw, new_sw, 1)
+
+old_mp = """    on_play:
+      - script.execute: {id: mp_stop_wake}
+    on_idle:
+      - lambda: "id(mp_playing) = false;"
+      - script.execute: {id: mp_idle_resume}"""
+new_mp = """    on_play:
+      - script.execute: {id: mp_stop_wake}
+      - script.execute: {id: ui_aplica}
+    on_idle:
+      - lambda: "id(mp_playing) = false;"
+      - script.execute: {id: mp_idle_resume}
+      - script.execute: {id: ui_aplica}"""
+assert src.count(old_mp) == 1, ("ganchos do media: ancora nao encontrada", src.count(old_mp))
+src = src.replace(old_mp, new_mp, 1)
+
 
 # ------------------------------------------------- 5. component.update -> nada
 src = src.replace("      - component.update: main_display\n", "", 2)
@@ -155,8 +197,10 @@ tick_new = """  - interval: 1s
                 id: legenda
                 text: !lambda |-
                   std::string t = id(mp_titulo).state;
+                  // Nome da rádio/faixa, a rolar no peito (long_mode:
+                  // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
                   if (t.empty()) return std::string("A TOCAR");
-                  return "A TOCAR · " + t;
+                  return t;
       - lambda: |-
           auto t = id(sntp_time).now();"""
 assert src.count(tick_old) == 1
