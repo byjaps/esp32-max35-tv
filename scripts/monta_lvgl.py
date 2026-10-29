@@ -12,7 +12,7 @@ DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
 SCRATCH = os.path.expanduser("~/.hermes/cache/scratch")
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.6"', 1)
+src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.8"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")
@@ -56,6 +56,26 @@ old_small = '    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn
 new_small = '    glyphs: " %°·–&\'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"'
 assert src.count(old_small) == 2, ("glyphs font_small/normal: esperava 2", src.count(old_small))
 src = src.replace(old_small, new_small)
+# --- LED da antena: verde a pensar, vermelho quando o pedido esta no agente
+old_va = "  on_tts_start:\n"
+new_va = """  # LED da antena: verde = a pensar (inclui os intents locais, que nunca chegam
+  # ao agente); vermelho = o pedido foi entregue ao agente e estamos a espera.
+  on_intent_start:
+    - if:
+        condition:
+          lambda: "return id(ecra_est) == 2;"
+        then:
+          - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
+  on_intent_end:
+    - if:
+        condition:
+          lambda: "return id(ecra_est) == 2;"
+        then:
+          - lvgl.widget.update: {id: led_antena, bg_color: 0x36E27B}
+  on_tts_start:\n"""
+assert src.count(old_va) == 1, ("voice_assistant on_tts_start: esperava 1", src.count(old_va))
+src = src.replace(old_va, new_va, 1)
+
 src = src.replace("\nscript:\n", "\nscript:\n" + scr, 1)
 # Diagnostico: mostrar o estado do ECRA (ecra_est) alem do va_state.
 src = src.replace('"rest=%d est=%d mp=%d al=%d ecra=%d fim=%s"',
@@ -179,15 +199,10 @@ tick_new = """  - interval: 1s
             if (r >= 3600) snprintf(b, sizeof(b), "%d:%02d:%02d", r / 3600, (r % 3600) / 60, r % 60);
             else           snprintf(b, sizeof(b), "%d:%02d", (r / 60) % 60, r % 60);
             return std::string(b);
-      - if:
-          condition:
-            lambda: "return id(va_state) == 0 && !id(mp_playing) && !id(alarme_tocar).state;"
-          then:
-            - lvgl.widget.show: relogio_big
-            - lvgl.widget.hide: relogio_small
-          else:
-            - lvgl.widget.hide: relogio_big
-            - lvgl.widget.show: relogio_small
+      # Relogio: SEMPRE o tamanho grande (pedido do Joel, 29/10). O `relogio_small`
+      # fica escondido para sempre; a troca de fonte por estado saiu.
+      - lvgl.widget.show: relogio_big
+      - lvgl.widget.hide: relogio_small
       # Legenda do media: «A TOCAR · <titulo>» (o titulo vem do HA)
       - if:
           condition:

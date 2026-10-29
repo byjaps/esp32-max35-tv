@@ -16,9 +16,9 @@
       # deslocados (o robo ficava fora do centro depois de tremer).
       - lvgl.widget.update: {id: cabeca, transform_rotation: 0}
       - lvgl.widget.update: {id: robo, x: 0, y: 0}
-      - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_small, led_antena]
+      - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_big, led_antena]
       - lvgl.widget.hide:
-          [relogio_big, olho_fechado_e, olho_fechado_d, x_0_0, x_0_1, x_1_0, x_1_1,
+          [relogio_small, olho_fechado_e, olho_fechado_d, x_0_0, x_0_1, x_1_0, x_1_1,
            sobrancelha_e, sobrancelha_d, sobrancelha_corte_e, sobrancelha_corte_d,
            boca_aberta, boca_aberta_furo, boca_triste, boca_triste_corte,
            onda1, onda1_corte, onda2, onda2_corte, onda3, onda3_corte,
@@ -31,6 +31,8 @@
 
   - id: ui_espera
     then:
+      # Relogio sempre no tamanho grande (pedido do Joel, 29/10): nao ha troca
+      # de fonte entre estados — so a cor muda no estado de noite.
       - lvgl.widget.hide: relogio_small
       - lvgl.widget.show: relogio_big
 
@@ -48,7 +50,7 @@
     then:
       - lvgl.label.update: {id: legenda, text: "A PENSAR"}
       - lvgl.widget.show: [ponto1, ponto2, ponto3]
-      - lvgl.widget.update: {id: led_antena, bg_color: 0xFFC46B}
+      - lvgl.widget.update: {id: led_antena, bg_color: 0x36E27B}
       - lvgl.animation.start: [inclina_a, ponto1_anima, ponto2_anima, ponto3_anima]
 
   - id: ui_falar
