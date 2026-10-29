@@ -12,7 +12,7 @@ DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
 SCRATCH = os.path.expanduser("~/.hermes/cache/scratch")
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.9"', 1)
+src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.10"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")

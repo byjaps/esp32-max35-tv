@@ -253,17 +253,17 @@ L.extend("""  # ----------------------------------------------------------------
     # mais depressa do que o painel desenha (tremia, não abanava). Agora é um
     # vaivém contínuo de 380 ms com ease_in_out.
     - id: tremer
-      duration: 380ms
+      duration: 900ms
       loop: true
       timing:
         - type: round_trip
-          pause: 0.06
+          pause: 0.08
         - type: ease_in_out
       widgets:
         - id: robo
           x:
-            from: -6
-            to: 6
+            from: -4
+            to: 4
     - id: inclina_a
       duration: 1200ms
       on_stop:
@@ -501,7 +501,7 @@ L.extend("""  # ----------------------------------------------------------------
             from: 100%
             to: 0%
     - id: olhos_saltam
-      duration: 300ms
+      duration: 600ms
       loop: true
       timing:
         - type: round_trip
@@ -510,11 +510,11 @@ L.extend("""  # ----------------------------------------------------------------
         - id: olho_e
           x:
             from: 179
-            to: 187
+            to: 185
         - id: olho_d
           x:
             from: 255
-            to: 263
+            to: 261
     - id: led_pulsa
       duration: 700ms
       loop: true
