@@ -238,22 +238,32 @@ texto("legenda", 150, 298, "font_small", "0x2F3947", "", largura=180,
 
 # ---------------------------------------------------------------- animações
 L.extend("""  # ---------------------------------------------------------------------
-  # Animações. `loop` repete; o "vai-e-vem" faz-se com duas animações e
-  # `on_stop` a arrancar a contrária (o LVGL do ESPHome não tem round_trip).
+  # Animações. `loop` repete; o "vai-e-vem" de duas metades faz-se com duas
+  # animações e `on_stop` a arrancar a contrária — MAS quando o vai-e-vem é
+  # simétrico há melhor: `timing: round_trip` (o ESPHome TEM round_trip), que
+  # dentro da MESMA animação vai de `from` a `to` e volta; como acaba no valor
+  # inicial, o `loop` não dá salto nenhum.
   # Só x/y/opa/transform_* são animáveis: largura e altura NÃO.
   # ---------------------------------------------------------------------
   animations:
     # (a respiracao do mockup saiu: animar o grupo de ecra inteiro obrigava o
     # LVGL a redesenhar 480x320 a 60 fps, saturava o SPI a 40 MHz e a voz
     # ficava lenta e com falhas — medido no painel a 29/10)
+    # v0.17.9 — alarme: era `loop` de -5 a 5 em 90 ms, ~11 saltos por segundo,
+    # mais depressa do que o painel desenha (tremia, não abanava). Agora é um
+    # vaivém contínuo de 380 ms com ease_in_out.
     - id: tremer
-      duration: 90ms
+      duration: 380ms
       loop: true
+      timing:
+        - type: round_trip
+          pause: 0.06
+        - type: ease_in_out
       widgets:
         - id: robo
           x:
-            from: -5
-            to: 5
+            from: -6
+            to: 6
     - id: inclina_a
       duration: 1200ms
       on_stop:
@@ -341,6 +351,8 @@ L.extend("""  # ----------------------------------------------------------------
     - id: onda_a
       duration: 700ms
       loop: true
+      timing:
+        - type: round_trip
       widgets:
         - id: onda1
           opa:
@@ -357,6 +369,8 @@ L.extend("""  # ----------------------------------------------------------------
     - id: ponto1_anima
       duration: 900ms
       loop: true
+      timing:
+        - type: round_trip
       widgets:
         - id: ponto1
           opa:
@@ -366,6 +380,8 @@ L.extend("""  # ----------------------------------------------------------------
       duration: 900ms
       start_delay: 200ms
       loop: true
+      timing:
+        - type: round_trip
       widgets:
         - id: ponto2
           opa:
@@ -375,6 +391,8 @@ L.extend("""  # ----------------------------------------------------------------
       duration: 900ms
       start_delay: 400ms
       loop: true
+      timing:
+        - type: round_trip
       widgets:
         - id: ponto3
           opa:
@@ -483,8 +501,11 @@ L.extend("""  # ----------------------------------------------------------------
             from: 100%
             to: 0%
     - id: olhos_saltam
-      duration: 160ms
+      duration: 300ms
       loop: true
+      timing:
+        - type: round_trip
+          pause: 0.05
       widgets:
         - id: olho_e
           x:
@@ -495,8 +516,10 @@ L.extend("""  # ----------------------------------------------------------------
             from: 255
             to: 263
     - id: led_pulsa
-      duration: 400ms
+      duration: 700ms
       loop: true
+      timing:
+        - type: round_trip
       widgets:
         - id: led_antena
           opa:
