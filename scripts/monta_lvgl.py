@@ -12,7 +12,7 @@ DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
 SCRATCH = os.path.expanduser("~/.hermes/cache/scratch")
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.12"', 1)
+src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.13"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")
@@ -314,6 +314,37 @@ novo_com = """      # v0.17.12 — o antigo "cala o ecrã durante a conversa" (g
 """
 assert src.count(velho_com) == 1, "comentário do hud_set"
 src = src.replace(velho_com, novo_com, 1)
+
+# LIMPEZA v0.17.13 (30/10/2026) — `rot_deg` (ângulo do anel do desenho antigo) já
+# não é lido por ninguém: o LVGL anima sozinho. Contado no YAML: 1 ocorrência
+# (a própria definição).
+velho_rot = """  # Angulo acumulado da animacao do anel, em graus. Avanca por TEMPO (graus por
+  # segundo, conforme o estado) e nao por frame: assim mexer no `number`
+  # \"Animação (fps)\" muda a fluidez, nao a velocidade da animacao.
+  - id: rot_deg
+    type: float
+    restore_value: no
+    initial_value: \"0\"
+"""
+assert src.count(velho_rot) == 1, "global rot_deg"
+src = src.replace(velho_rot, "", 1)
+
+velho_h1 = """#   + a rotacao e ajustavel EM TEMPO REAL pelo `number` \"Animação (fps)\"
+#     (display em `update_interval: never` + script `ecra_loop`): e o que
+#     permite medir o efeito do SPI da tela no audio sem recompilar
+"""
+assert src.count(velho_h1) == 1, "cabeçalho fps"
+src = src.replace(velho_h1, "", 1)
+
+velho_h2 = """#   ⚠️ SEM LVGL de proposito: um anel com quads + primitivas nativas custa
+#      menos RAM do que reescrever o ecra todo em widgets lv_arc.
+"""
+novo_h2 = """#   ⚠️ ATÉ v0.16.0 SEM LVGL de proposito (anel com quads em primitivas nativas);
+#      desde a v0.16.0 quem desenha é o LVGL, gerado por `gera_face.py` a partir
+#      do manifest do mockup. Ver a skill `esphome-esp32-voice-panel` → ecra-lvgl.md.
+"""
+assert src.count(velho_h2) == 1, "cabeçalho sem-lvgl"
+src = src.replace(velho_h2, novo_h2, 1)
 
 open(DEST, "w", encoding="utf-8").write(src)
 print("escrito", DEST, len(src.splitlines()), "linhas")
