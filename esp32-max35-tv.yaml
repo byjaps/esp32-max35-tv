@@ -210,7 +210,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.17.13"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.17.14"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -694,11 +694,6 @@ script:
       # por fps, v0.15.12) saiu com o `number` Animação (fps): quem desenha é o
       # LVGL e o custo por frame já não se governa por ali.
       - lambda: |-
-          // Fail-safe do anel «a trabalhar»: em espera nao ha ferramenta nenhuma a
-          // correr. Se o plugin morrer a meio do turno, o violeta nao fica preso.
-          if (state == 0 && id(trabalho).state) {
-            id(trabalho).turn_off();
-          }
           id(va_state) = state;
       - script.execute: {id: ui_aplica}
 
@@ -962,18 +957,7 @@ text:
 # Mostra de 60 em 60s se o motor esta a escutar e se os modelos estao ativos.
 # "modelos OFF" = o HA enviou uma lista vazia em on_set_configuration e
 # desativou-os todos.
-# --- ESTADO «A TRABALHAR» (24/10/2026) --------------------------------------
-# Ligado pelo plugin `painel-trabalho` do Hermes enquanto uma ferramenta corre num
-# pedido que veio do painel. Nao desenha nada sozinho: so muda a cor do anel
-# enquanto `va_state == 2` (a pensar). O plugin desliga-o no fim do turno e o
-# `hud_set` desliga-o sempre que o painel volta a "em espera" (fail-safe).
 switch:
-  - platform: template
-    name: "A Trabalhar"
-    id: trabalho
-    icon: "mdi:hammer-wrench"
-    optimistic: true
-    restore_mode: ALWAYS_OFF
   # 29/10/2026 — alarme do temporizador a tocar: o ecra troca o anel normal por
   # um despertador animado. Ligado/desligado pelo script `temporizador_alarme`
   # do HA; ALWAYS_OFF no arranque para nunca ficar preso ligado.
@@ -1037,19 +1021,49 @@ interval:
       # fica escondido para sempre; a troca de fonte por estado saiu.
       - lvgl.widget.show: relogio_big
       - lvgl.widget.hide: relogio_small
-      # Legenda do media: «A TOCAR · <titulo>» (o titulo vem do HA)
+      # Legenda do peito, por prioridade (v0.17.14 — opcao (a) do autor):
+      #   1) a linha escrita pelo agente (`hud_linha`, vive 45 s) ocupa a legenda
+      #      e devolve-a ao estado quando desaparece — sem widget novo, no sitio
+      #      que ja se olha;
+      #   2) o titulo do media, a rolar;
+      #   3) a legenda do estado (o mesmo texto que os `ui_*` escrevem: aqui so
+      #      serve para a repor quando a linha HUD se apaga ou o media para).
+      # O alarme manda sempre: `ui_alarme` escreve "ALARME" a vermelho.
       - if:
           condition:
-            lambda: "return id(mp_playing) && id(va_state) == 0 && !id(alarme_tocar).state;"
+            lambda: "return !id(hud_linha).state.empty() && !id(alarme_tocar).state;"
           then:
             - lvgl.label.update:
                 id: legenda
-                text: !lambda |-
-                  std::string t = id(mp_titulo).state;
-                  // Nome da rádio/faixa, a rolar no peito (long_mode:
-                  // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
-                  if (t.empty()) return std::string("A TOCAR");
-                  return t;
+                text: !lambda 'return id(hud_linha).state;'
+                text_color: 0x2F3947
+          else:
+            - if:
+                condition:
+                  lambda: "return id(mp_playing) && id(va_state) == 0 && !id(alarme_tocar).state;"
+                then:
+                  - lvgl.label.update:
+                      id: legenda
+                      text: !lambda |-
+                        std::string t = id(mp_titulo).state;
+                        // Nome da rádio/faixa, a rolar no peito (long_mode:
+                        // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
+                        if (t.empty()) return std::string("A TOCAR");
+                        return t;
+            - if:
+                condition:
+                  lambda: "return !id(mp_playing) && !id(alarme_tocar).state;"
+                then:
+                  - lvgl.label.update:
+                      id: legenda
+                      text: !lambda |-
+                        switch (id(va_state)) {
+                          case 1: return std::string("A OUVIR");
+                          case 2: return std::string("A PENSAR");
+                          case 3: return std::string("A FALAR");
+                          default: return std::string();
+                        }
+                      text_color: 0x2F3947
       - lambda: |-
           auto t = id(sntp_time).now();
           std::string s = id(contagem_fim).state;

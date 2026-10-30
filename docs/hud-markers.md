@@ -8,10 +8,13 @@ conversation component strips the marker out of the speech and writes the text i
 Feature version: **v0.15.16** (line), **v0.15.17** (auto-clear).
 Requires a **local patch** on the Hermes HA component — see [Install](#install).
 
-> ⚠️ **Status on the LVGL face (v0.16.0 and later, including v0.17.13):** the entity,
-> the marker stripping and the 45 s auto-clear all work, but the robot face has **no
-> widget for this line yet** — the text is written and never drawn. It was drawn by the
-> round-face HUD (≤ v0.15.27). Treat the drawing as pending, not as a supported feature.
+> **v0.17.14 — where it shows now:** the line **takes over the chest caption** (the one
+> that otherwise reads `A OUVIR` / `A PENSAR` / `A FALAR` or the scrolling media title).
+> When the text is cleared — after 45 s, on a new wake word, or when Home Assistant sends
+> an empty string — the caption goes back to the state within one second. The alarm has
+> priority: while the timer alarm plays, the caption stays `ALARME`.
+> Between **v0.16.0 and v0.17.13** the line was written but **not drawn at all** (the
+> widget was lost in the LVGL rewrite); v0.15.16–v0.15.27 drew it on the ring HUD.
 
 ## Why it lives in Home Assistant, not on the panel
 
@@ -45,7 +48,7 @@ Agent reply (text)                         HA conversation component            
 
 | Marker | Home Assistant service | Notes |
 |---|---|---|
-| `/display/info` | `text.set_value` on the `Linha HUD` text entity | `{"text": "..."}`, max 60 chars. ⚠️ Not drawn by the LVGL face yet — see the status note at the top. |
+| `/display/info` | `text.set_value` on the `Linha HUD` text entity | `{"text": "..."}`, max 60 chars. Shown in the chest caption; scrolls if it does not fit. |
 | `/light` | `light.turn_on` on the screen light | `{"brightness_pct": 0-100}` |
 | `/volume` | `number.set_value` on the panel volume | `{"value": 0-100}` |
 
@@ -146,21 +149,19 @@ entity in `ROTAS` that does not exist. This is the cheap answer to a real failur
 firmware rename, a marker dies silently because the entity id changed (it happened on
 23/10 with `text.mini_tv_linha_hud`).
 
-## The "a tool is running" signal on the LVGL face (v0.15.18 → v0.16.0+)
+## The "where is the answer" signal: the antenna LED (v0.16.0+)
 
-The `voice_assistant` only knows five states; whether the *brain* is running a tool is something
-only Hermes knows. `switch.*_a_trabalhar` (template switch, optimistic, `ALWAYS_OFF`) is turned on
-by the `painel-trabalho` plugin (hook `pre_tool_call`, only in the `ha-voice` session — a Telegram
-tool can run for minutes) and off 3.5 s after the last tool. In the old ring HUD that switch turned
-the ring **violet `0xB36BFF`**.
+The `voice_assistant` only knows five states, so the face cannot tell *where* the answer is coming
+from. The **antenna LED** does: **green** while the panel is "thinking" (which includes the local,
+sub-second intents) and **red** from `on_intent_start` until the intent is answered
+(`on_intent_end`) — red means the request went to the agent. Both are gated on `ecra_est == 2`, so
+the LED never changes colour while the face is idle or speaking.
 
-The robot face has no ring. What it shows is the **antenna LED**: green while the panel is
-"thinking", red from `on_intent_start` until the intent is answered (`on_intent_end`) — in practice
-red means the request went to the agent, because local intents answer in milliseconds. Both are
-gated on `ecra_est == 2`, so the LED never changes colour while the face is idle or speaking.
+It reports *where* the answer is, not *what the agent is doing*: a slow tool leaves the LED plain
+red, with no separate "a tool is running" state.
 
-- `post_tool_call` does not receive `session_id`, so the close is a timer, not a counter.
-- The switch survives as the latch that catches a plugin dying mid-turn: the firmware turns it off
-  whenever the panel returns to idle.
-- Neither the LED nor the switch colour is exported to HA: verify the switch by API, the rest with
-  your eyes.
+> **History:** v0.15.18 introduced `switch.*_a_trabalhar` plus the `painel-trabalho` Hermes plugin
+> (hook `pre_tool_call`) to turn the ring violet `0xB36BFF` while a tool ran. The LVGL face has no
+> ring and never drew that switch, so both were **removed in v0.17.14** — the switch from the
+> firmware, the plugin from this repository. If you want that signal back, it has to be a visible
+> element of the face, not a hidden switch.

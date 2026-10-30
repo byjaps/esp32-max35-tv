@@ -42,8 +42,8 @@ repository; the "brain" is Hermes via
   its reply, the HA conversation component strips it before TTS and writes it to the
   `Linha HUD` entity (auto-clears after 45 s and when a new wake word opens the mic).
   Needs a local patch on the HA component: [`docs/hud-markers.md`](docs/hud-markers.md).
-  ⚠️ On the LVGL face the text is written but **not drawn yet** — the entity and the
-  marker pipeline work, the widget is pending.
+  It takes over the chest caption while it exists (the state caption comes back within a
+  second), so nothing new is added to the screen.
 - **Conversation mode**: after each answer the panel reopens the microphone for
   **7 s**, so follow-up phrases need no wake word. The chain is capped by a
   `number` entity (**10** by default, 0 disables it) — the cap is a safety brake,

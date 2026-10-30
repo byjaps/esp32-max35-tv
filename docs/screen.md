@@ -38,6 +38,20 @@ made the time unreadable from the sofa). During music the track/station name
 scrolls in a label with `long_mode: SCROLL_CIRCULAR`; where the name comes from is
 in [`media-player.md`](media-player.md).
 
+### What the caption shows
+
+One label, three levels of priority, resolved every second:
+
+1. **The agent's line** (`Linha HUD`, v0.17.14) — when the agent writes text with a
+   `[HW:/display/info:…]` marker it takes over the caption and scrolls if it does not fit.
+   It is cleared after 45 s, on a new wake word, or when HA sends an empty string; the
+   caption returns to its normal content within a second.
+2. **The media title** while music plays.
+3. **The state caption** of the table above.
+
+The timer alarm has priority over all three: while `switch.<panel>_alarme_a_tocar` is on,
+the caption is `ALARME` in red.
+
 ## The timer
 
 Three independent slots (`timer.temporizador_1..3`, created on the HA side) started

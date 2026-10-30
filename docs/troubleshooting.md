@@ -11,7 +11,7 @@ The first 2026.9.x build rebooted every ~60 s (log: uptime 3.4 s → 63.5 s →
 build. That looked like a version bug, but it was **post-flash settling**: the
 board rebooted 2–3 times in the first ~45 min after each flash and then settled
 — measured 1 h 16 min of continuous uptime, and later builds ran stable for
-**2 h 45 m+**. The current firmware (**v0.17.13**) runs **ESPHome 2026.10.0**
+**2 h 45 m+**. The current firmware (**v0.17.14**) runs **ESPHome 2026.10.0**
 in production, stable. **Do not pin to 2026.8.2 or 2026.9.0** — the current
 build is the one in use.
 Still confirm `esphome version` before compiling and watch 3–4 min after any

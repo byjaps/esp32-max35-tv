@@ -1,6 +1,0 @@
-name: painel-trabalho
-version: "1.0.0"
-description: "Sinal «a trabalhar» do painel de voz MAX35-TV: o hook pre_tool_call liga o switch.<painel>_a_trabalhar enquanto uma ferramenta corre num pedido da sessão ha-voice. No ecrã LVGL o sinal vive no LED da antena (verde a pensar, vermelho com o pedido no agente); o switch é o trinco que o firmware desliga ao voltar a «em espera». Desliga sozinho 3,5 s depois da última ferramenta. Fail-open: tudo em thread, timeout 2 s, erros engolidos — nunca bloqueia uma chamada de ferramenta."
-author: "Hermes homelab"
-hooks:
-  - pre_tool_call

@@ -15,7 +15,7 @@ ROOT = os.path.dirname(HERE)
 ORIG = os.environ.get("MAX35_BASE", os.path.join(HERE, "base-0.15.27.yaml"))
 # Saida: por omissao o YAML que o esphome usa (na raiz do repo / da pasta de build).
 DEST = os.environ.get("MAX35_OUT", os.path.join(ROOT, "esp32-max35-tv.yaml"))
-VER = os.environ.get("MAX35_VERSION", "0.17.13")
+VER = os.environ.get("MAX35_VERSION", "0.17.14")
 SCRATCH = HERE
 
 src = open(ORIG, encoding="utf-8").read()
@@ -214,19 +214,49 @@ tick_new = """  - interval: 1s
       # fica escondido para sempre; a troca de fonte por estado saiu.
       - lvgl.widget.show: relogio_big
       - lvgl.widget.hide: relogio_small
-      # Legenda do media: «A TOCAR · <titulo>» (o titulo vem do HA)
+      # Legenda do peito, por prioridade (v0.17.14 — opcao (a) do autor):
+      #   1) a linha escrita pelo agente (`hud_linha`, vive 45 s) ocupa a legenda
+      #      e devolve-a ao estado quando desaparece — sem widget novo, no sitio
+      #      que ja se olha;
+      #   2) o titulo do media, a rolar;
+      #   3) a legenda do estado (o mesmo texto que os `ui_*` escrevem: aqui so
+      #      serve para a repor quando a linha HUD se apaga ou o media para).
+      # O alarme manda sempre: `ui_alarme` escreve "ALARME" a vermelho.
       - if:
           condition:
-            lambda: "return id(mp_playing) && id(va_state) == 0 && !id(alarme_tocar).state;"
+            lambda: "return !id(hud_linha).state.empty() && !id(alarme_tocar).state;"
           then:
             - lvgl.label.update:
                 id: legenda
-                text: !lambda |-
-                  std::string t = id(mp_titulo).state;
-                  // Nome da rádio/faixa, a rolar no peito (long_mode:
-                  // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
-                  if (t.empty()) return std::string("A TOCAR");
-                  return t;
+                text: !lambda 'return id(hud_linha).state;'
+                text_color: 0x2F3947
+          else:
+            - if:
+                condition:
+                  lambda: "return id(mp_playing) && id(va_state) == 0 && !id(alarme_tocar).state;"
+                then:
+                  - lvgl.label.update:
+                      id: legenda
+                      text: !lambda |-
+                        std::string t = id(mp_titulo).state;
+                        // Nome da rádio/faixa, a rolar no peito (long_mode:
+                        // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
+                        if (t.empty()) return std::string("A TOCAR");
+                        return t;
+            - if:
+                condition:
+                  lambda: "return !id(mp_playing) && !id(alarme_tocar).state;"
+                then:
+                  - lvgl.label.update:
+                      id: legenda
+                      text: !lambda |-
+                        switch (id(va_state)) {
+                          case 1: return std::string("A OUVIR");
+                          case 2: return std::string("A PENSAR");
+                          case 3: return std::string("A FALAR");
+                          default: return std::string();
+                        }
+                      text_color: 0x2F3947
       - lambda: |-
           auto t = id(sntp_time).now();"""
 assert src.count(tick_old) == 1
@@ -352,6 +382,19 @@ novo_h2 = """#   ⚠️ ATÉ v0.16.0 SEM LVGL de proposito (anel com quads em pr
 """
 assert src.count(velho_h2) == 1, "cabeçalho sem-lvgl"
 src = src.replace(velho_h2, novo_h2, 1)
+
+# LIMPEZA v0.17.14 (30/10/2026) — sai de vez o «A Trabalhar» (v0.15.18): o anel
+# violeta que ele pintava morreu com o desenho novo e o switch ficou sem efeito
+# visivel. Quem diz «o pedido esta no agente» e o LED da antena (verde a pensar,
+# vermelho com o pedido entregue). O plugin `painel-trabalho` do Hermes sai com
+# ele — nao ha nada para ligar.
+velho_safe = '          // Fail-safe do anel «a trabalhar»: em espera nao ha ferramenta nenhuma a\n          // correr. Se o plugin morrer a meio do turno, o violeta nao fica preso.\n          if (state == 0 && id(trabalho).state) {\n            id(trabalho).turn_off();\n          }\n'
+assert src.count(velho_safe) == 1, ("fail-safe do trabalho", src.count(velho_safe))
+src = src.replace(velho_safe, "", 1)
+
+velho_sw = '# --- ESTADO «A TRABALHAR» (24/10/2026) --------------------------------------\n# Ligado pelo plugin `painel-trabalho` do Hermes enquanto uma ferramenta corre num\n# pedido que veio do painel. Nao desenha nada sozinho: so muda a cor do anel\n# enquanto `va_state == 2` (a pensar). O plugin desliga-o no fim do turno e o\n# `hud_set` desliga-o sempre que o painel volta a "em espera" (fail-safe).\nswitch:\n  - platform: template\n    name: "A Trabalhar"\n    id: trabalho\n    icon: "mdi:hammer-wrench"\n    optimistic: true\n    restore_mode: ALWAYS_OFF\n'
+assert src.count(velho_sw) == 1, ("switch A Trabalhar", src.count(velho_sw))
+src = src.replace(velho_sw, "switch:\n", 1)
 
 open(DEST, "w", encoding="utf-8").write(src)
 print("escrito", DEST, len(src.splitlines()), "linhas")
