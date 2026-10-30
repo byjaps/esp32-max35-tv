@@ -12,7 +12,7 @@ DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
 SCRATCH = os.path.expanduser("~/.hermes/cache/scratch")
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.10"', 1)
+src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.11"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")
@@ -27,7 +27,11 @@ display_novo = """display:
   - platform: mipi_spi
     id: main_display
     model: ST7796
-    data_rate: 40MHz
+    # v0.17.11 — 40 -> 80 MHz: o mipi_spi só oferece 40 ou 80 para o ST7796 (o
+    # 60 é recusado no `config`). A 80 MHz o frame completo desce de ~61 ms
+    # para ~31 ms, que é o que se nota como "arrasto" ao mover o robô inteiro
+    # (o LVGL invalida 480x320 e o ecrã atualiza-se em faixas).
+    data_rate: 80MHz
     invert_colors: true
     transform:
       mirror_x: true
