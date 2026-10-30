@@ -1,0 +1,162 @@
+  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL ---------------------------------
+  #   0 espera · 1 a ouvir · 2 a pensar · 3 a falar · 4 a tocar · 5 a dormir
+  #   6 sem ligação · 7 alarme do temporizador
+  # `ui_base` repõe tudo e arranca a respiração; cada estado acrescenta as suas
+  # animações. Só corre quando o estado muda (nunca em ciclo).
+  - id: ui_base
+    then:
+      - lambda: "id(anim_ok) = false;"
+      - lvgl.animation.stop:
+          [tremer, onda_a, inclina_a, inclina_b, balanca_a, balanca_b,
+           boca_a, boca_b, ponto1_anima, ponto2_anima, ponto3_anima,
+           nota_a, nota_b, z_a, z_b, z_c,
+           anel_1, anel_2, anel_3, olhos_saltam, led_pulsa]
+      - lambda: "id(anim_ok) = true;"
+      # Cabeca e robo voltam ao sitio: parar uma animacao a meio deixava o x/y
+      # deslocados (o robo ficava fora do centro depois de tremer).
+      - lvgl.widget.update: {id: cabeca, transform_rotation: 0}
+      - lvgl.widget.update: {id: robo, x: 0, y: 0}
+      - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_big, led_antena]
+      - lvgl.widget.hide:
+          [relogio_small, olho_fechado_e, olho_fechado_d, x_0_0, x_0_1, x_1_0, x_1_1,
+           sobrancelha_e, sobrancelha_d, sobrancelha_corte_e, sobrancelha_corte_d,
+           boca_aberta, boca_aberta_furo, boca_triste, boca_triste_corte,
+           onda1, onda1_corte, onda2, onda2_corte, onda3, onda3_corte,
+           ponto1, ponto2, ponto3, anel1, anel2, anel3, nota1, nota2, z1, z2, z3,
+           excl_esq_barra, excl_esq_ponto, excl_dir_barra, excl_dir_ponto]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xE1FCFF, opa: 100%}
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x5A6E82}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x5A6E82}
+      - lvgl.label.update: {id: legenda, text: "", text_color: 0x2F3947}
+
+  - id: ui_espera
+    then:
+      # Relogio sempre no tamanho grande (pedido do Joel, 29/10): nao ha troca
+      # de fonte entre estados — so a cor muda no estado de noite.
+      - lvgl.widget.hide: relogio_small
+      - lvgl.widget.show: relogio_big
+
+  - id: ui_ouvir
+    then:
+      - lvgl.label.update: {id: legenda, text: "A OUVIR"}
+      - lvgl.widget.show: [sobrancelha_e, sobrancelha_d, sobrancelha_corte_e,
+                           sobrancelha_corte_d, onda1, onda1_corte, onda2,
+                           onda2_corte, onda3, onda3_corte]
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x40E0FF}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x40E0FF}
+      - lvgl.animation.start: onda_a
+
+  - id: ui_pensar
+    then:
+      - lvgl.label.update: {id: legenda, text: "A PENSAR"}
+      - lvgl.widget.show: [ponto1, ponto2, ponto3]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0x36E27B}
+      - lvgl.animation.start: [inclina_a, ponto1_anima, ponto2_anima, ponto3_anima]
+
+  - id: ui_falar
+    then:
+      - lvgl.label.update: {id: legenda, text: "A FALAR"}
+      - lvgl.widget.hide: [boca_sorriso, boca_corte]
+      - lvgl.widget.show: [boca_aberta, boca_aberta_furo]
+      - lvgl.animation.start: boca_a
+
+  - id: ui_musica
+    then:
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d, nota1, nota2]
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x40E0FF}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x40E0FF}
+      - lvgl.animation.start: [balanca_a, nota_a, nota_b]
+
+  - id: ui_noite
+    then:
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d, z1, z2, z3]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0x3A5A66}
+      - lvgl.widget.update: {id: casca, bg_color: 0xB1B4B9, bg_grad_color: 0x979EA7}
+      - lvgl.animation.start: [z_a, z_b, z_c]
+
+  - id: ui_erro
+    then:
+      - lvgl.label.update: {id: legenda, text: "SEM LIGAÇÃO"}
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte]
+      - lvgl.widget.show: [x_0_0, x_0_1, x_1_0, x_1_1, boca_triste, boca_triste_corte]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
+
+  - id: ui_alarme
+    then:
+      - lvgl.label.update: {id: legenda, text: "ALARME", text_color: 0xFF6060}
+      - lvgl.widget.hide: [boca_sorriso, boca_corte]
+      - lvgl.widget.show: [boca_aberta, boca_aberta_furo, anel1, anel2, anel3,
+                           excl_esq_barra, excl_esq_ponto,
+                           excl_dir_barra, excl_dir_ponto]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
+      - lvgl.animation.start: [tremer, olhos_saltam, led_pulsa, boca_a,
+                               anel_1, anel_2, anel_3]
+
+  - id: ui_aplica
+    then:
+      - lambda: |-
+          int est = id(va_state);
+          // O alarme manda em tudo; o media só aparece fora de uma conversa
+          // (o TTS também passa pelo media player).
+          if (id(alarme_tocar).state) est = 7;
+          else if (id(mp_playing) && est == 0) est = 4;
+          id(ecra_est) = est;
+      - script.execute: ui_base
+      - if:
+          condition:
+            lambda: "return id(ecra_est) == 7;"
+          then:
+            - script.execute: ui_alarme
+          else:
+            - if:
+                condition:
+                  lambda: "return id(ecra_est) == 6;"
+                then:
+                  - script.execute: ui_erro
+                else:
+                  - if:
+                      condition:
+                        lambda: "return id(ecra_est) == 5;"
+                      then:
+                        - script.execute: ui_noite
+                      else:
+                        - if:
+                            condition:
+                              lambda: "return id(ecra_est) == 4;"
+                            then:
+                              - script.execute: ui_musica
+                            else:
+                              - if:
+                                  condition:
+                                    lambda: "return id(ecra_est) == 3;"
+                                  then:
+                                    - script.execute: ui_falar
+                                  else:
+                                    - if:
+                                        condition:
+                                          lambda: "return id(ecra_est) == 2;"
+                                        then:
+                                          - script.execute: ui_pensar
+                                        else:
+                                          - if:
+                                              condition:
+                                                lambda: "return id(ecra_est) == 1;"
+                                              then:
+                                                - script.execute: ui_ouvir
+                                              else:
+                                                - script.execute: ui_espera
+
+  # Piscar de olhos: tapa os olhos 110 ms e volta a abrir (só em espera).
+  - id: ui_piscar
+    then:
+      - if:
+          condition:
+            lambda: "return id(ecra_est) == 0;"
+          then:
+            - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+            - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
+            - delay: 110ms
+            - lvgl.widget.hide: [olho_fechado_e, olho_fechado_d]
+            - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d]
