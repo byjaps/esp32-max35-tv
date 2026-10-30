@@ -7,14 +7,19 @@ meio alterado sem aviso.
 import re, os, sys
 
 BASE = os.path.expanduser("~/homelab/esphome-build")
-ORIG = os.path.join(BASE, "esp32-max35-tv-pre-lvgl.yaml")  # v0.15.27 congelado
-DEST = os.path.join(BASE, "esp32-max35-tv-lvgl.yaml")
-# v0.17.13 — o gerador vive AQUI (nao em ~/.hermes/cache/scratch, que e limpo
-# ao fim de 24 h inativas). Assim o YAML do ecra e reproduzivel a partir do repo.
-SCRATCH = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+# Base congelada: a v0.15.27 (ultima da cara redonda). Vive ao lado do gerador
+# para o YAML do ecra ser reproduzivel a partir de um clone do repo, sem
+# caminhos do autor.
+ORIG = os.environ.get("MAX35_BASE", os.path.join(HERE, "base-0.15.27.yaml"))
+# Saida: por omissao o YAML que o esphome usa (na raiz do repo / da pasta de build).
+DEST = os.environ.get("MAX35_OUT", os.path.join(ROOT, "esp32-max35-tv.yaml"))
+VER = os.environ.get("MAX35_VERSION", "0.17.13")
+SCRATCH = HERE
 
 src = open(ORIG, encoding="utf-8").read()
-src = src.replace('fw_version: "0.15.27"', 'fw_version: "0.17.13"', 1)
+src = src.replace('fw_version: "0.15.27"', f'fw_version: "{VER}"', 1)
 
 # ---------------------------------------------------------------- 1. display
 i_disp = src.index("\ndisplay:\n")
@@ -205,7 +210,7 @@ tick_new = """  - interval: 1s
             if (r >= 3600) snprintf(b, sizeof(b), "%d:%02d:%02d", r / 3600, (r % 3600) / 60, r % 60);
             else           snprintf(b, sizeof(b), "%d:%02d", (r / 60) % 60, r % 60);
             return std::string(b);
-      # Relogio: SEMPRE o tamanho grande (pedido do Joel, 29/10). O `relogio_small`
+      # Relogio: SEMPRE o tamanho grande (pedido do autor, 29/10). O `relogio_small`
       # fica escondido para sempre; a troca de fonte por estado saiu.
       - lvgl.widget.show: relogio_big
       - lvgl.widget.hide: relogio_small

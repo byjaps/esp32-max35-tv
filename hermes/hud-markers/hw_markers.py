@@ -41,7 +41,7 @@ _HW_LOOSE = re.compile(r"\[HW:[^\]]*\]")
 # defesa, para o caso de ele se esquecer ou de um pedido vir de outro sítio.
 # Mudar aqui e na PANEL_RULE — os dois valores têm de contar a mesma história.
 # ---------------------------------------------------------------------------
-# Pisos de usabilidade MEDIDOS pelo Joel no painel real (24/10/2026, 00:45):
+# Pisos de usabilidade MEDIDOS no painel real (24/10/2026, 00:45):
 # «o volume mínimo para falar é 60 e o brilho 35; menos que isto fica muito baixo e
 # muito escuro». Abaixo disto o painel é inútil, por isso o piso é garantido sempre —
 # de dia e de noite. Estes números não são gosto pessoal: foram ouvidos e vistos.

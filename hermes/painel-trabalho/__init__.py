@@ -52,7 +52,7 @@ def _cfg() -> dict[str, str]:
     except OSError:
         pass
     _env = {
-        "url": (valores.get("HASS_URL") or "http://192.168.31.180:8123").rstrip("/"),
+        "url": (valores.get("HASS_URL") or os.environ.get("HASS_URL") or "http://homeassistant.local:8123").rstrip("/"),
         "token": valores.get("HASS_TOKEN") or os.environ.get("HASS_TOKEN", ""),
     }
     return _env

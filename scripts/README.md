@@ -13,10 +13,13 @@ personal network.
 | `vigia-bateria.py <minutes>` | Sample the battery every 30 s and watch the trend (charging → voltage must rise). |
 | `regista-bateria.py` | Log battery values over time. |
 | `gestor-bateria-painel.py` | Battery logger + optional charge-plug safety (set `PLUG_ENTITY`). |
-| `mockup_render.py` | Render the HUD to PNG offline (Python/PIL) with the same drawing primitives — so a screen change is seen & approved before a ~10 min compile+OTA. |
+| `preview_lvgl.py [dir]` | Render the 8 screen states to PNG with the **same coordinates** the generator feeds to LVGL — approve the face before a ~10 min compile+OTA. |
+| `ids_mortos.py [yaml]` | List `globals`/`script` ids that are defined but never referenced (dead-code finder). |
 
-Wake-word model changes are done directly in the YAML (see `docs/wake-word.md`);
-the one-off migration scripts that used to patch the old config are not
+Wake-word model changes are done directly in the YAML (see `docs/wake-word.md`).
+The screen is **generated** — see [`../geradores/`](../geradores/) and
+[`../docs/screen.md`](../docs/screen.md); do not edit the LVGL block of the YAML
+by hand. The one-off migration scripts that used to patch the old config are not
 included here.
 
 ## Notes

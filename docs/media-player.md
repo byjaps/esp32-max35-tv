@@ -27,11 +27,21 @@ media player starts with the engine running, the speaker fails with
 
 The ESPHome media player does **not** receive metadata from HA (title, artist,
 station) — the API only carries the URL. The firmware exposes a `text` entity
-(`Media title`); HA writes the resolved title there (`text.set_value` — note:
-`text.set_value`, there is no `text.set` in HA; using the wrong name returns
-HTTP 400 and opens a repair warning), and the media screen shows it. If empty,
-that, it falls back to "Radio / Music". Deriving a readable name from
-`media_content_id` is done in a HA template (see the note in the YAML history).
+(`Media title`); HA writes a name there (`text.set_value` — note: `text.set_value`,
+there is no `text.set` in HA; using the wrong name returns HTTP 400 and opens a
+repair warning), and the media screen scrolls it across the robot's chest.
+
+Two subtleties, both measured on the real panel:
+
+- **The name is derived from the URL the panel receives, not from the Music
+  Assistant player.** The MA entity mirrors the panel and, when it cannot resolve
+  the stream, repeats the *previous* station name, so the HA automation ignores
+  `media_source://radio_browser/<uuid>` on purpose and only fills in what it can
+  read from a real URL.
+- **Radio Browser stations have no URL at all** (`media-source://radio_browser/<uuid>`);
+  their name only exists in the Radio Browser catalogue, so a small local service
+  resolves the UUID to a name and writes the `text` entity. With an empty title the
+  caption falls back to `A TOCAR` ("playing").
 
 ## Announcements / TTS
 

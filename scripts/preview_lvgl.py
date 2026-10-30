@@ -1,15 +1,23 @@
-"""Desenha a cara com as MESMAS coordenadas do gerador (gera_face.M) em PIL.
+"""Desenha a cara com as MESMAS coordenadas do gerador (../geradores/gera_face.py) em PIL.
 
 Serve de prova visual antes de cada OTA: se o preview estiver certo e o painel não,
 o problema é do LVGL (cor/empilhamento), não da geometria.
+
+Uso: python3 preview_lvgl.py [pasta_saida]
+Gera <estado>.png (480x320) + folha.png com os 8 estados.
 """
-import sys, importlib.util
+import importlib.util
+import os
+import sys
 from PIL import Image, ImageDraw
 
-spec = importlib.util.spec_from_file_location("gf", "/home/hermes/.hermes/cache/scratch/gera_face.py")
+GERADOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "geradores", "gera_face.py")
+spec = importlib.util.spec_from_file_location("gf", GERADOR)
 gf = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gf)          # escreve o bloco lvgl (efeito colateral inofensivo)
 M = gf.M
+SAIDA = sys.argv[1] if len(sys.argv) > 1 else "preview"
+os.makedirs(SAIDA, exist_ok=True)
 
 W, H = 480, 320
 FUNDO = (5, 8, 12)
@@ -131,14 +139,14 @@ def com_texto(im, legenda, relogio_grande):
     return im
 
 
-ESTADOS = [("espera", "", True), ("ouvir", "A OUVIR", False), ("pensar", "A PENSAR", False),
+ESTADOS = [("espera", "ESPERA", True), ("ouvir", "A OUVIR", False), ("pensar", "A PENSAR", False),
            ("falar", "A FALAR", False), ("musica", "A TOCAR", False), ("noite", "A DORMIR", False),
            ("erro", "SEM LIGAÇÃO", False), ("alarme", "ALARME", False)]
 
 folha = Image.new("RGB", (W * 2, H * 4), (30, 30, 30))
 for i, (est, leg, grande) in enumerate(ESTADOS):
     im = com_texto(frame(est), leg, grande)
-    im.save(f"/home/hermes/.hermes/cache/scratch/preview/{est}.png")
+    im.save(f"{SAIDA}/{est}.png")
     folha.paste(im, ((i % 2) * W, (i // 2) * H))
-folha.save("/home/hermes/.hermes/cache/scratch/preview/folha.png")
-print("preview escrito")
+folha.save(f"{SAIDA}/folha.png")
+print("preview escrito em", SAIDA)

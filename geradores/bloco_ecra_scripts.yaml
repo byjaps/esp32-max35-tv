@@ -31,7 +31,7 @@
 
   - id: ui_espera
     then:
-      # Relogio sempre no tamanho grande (pedido do Joel, 29/10): nao ha troca
+      # Relogio sempre no tamanho grande (pedido do autor, 29/10): nao ha troca
       # de fonte entre estados — so a cor muda no estado de noite.
       - lvgl.widget.hide: relogio_small
       - lvgl.widget.show: relogio_big

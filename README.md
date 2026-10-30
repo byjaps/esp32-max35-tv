@@ -14,7 +14,7 @@ repository; the "brain" is Hermes via
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/byjaps/esp32-max35-tv)](https://github.com/byjaps/esp32-max35-tv)
 [![Release](https://img.shields.io/github/v/release/byjaps/esp32-max35-tv?label=release&color=blue)](https://github.com/byjaps/esp32-max35-tv/releases/latest)
-[![ESPHome](https://img.shields.io/badge/ESPHome-2026.9.1-green.svg)](https://esphome.io)
+[![ESPHome](https://img.shields.io/badge/ESPHome-2026.10.0-green.svg)](https://esphome.io)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--S3-orange.svg)](hardware/README.md)
 [![HA Role](https://img.shields.io/badge/Home%20Assistant-Conversation%20Agent-blueviolet.svg)](hermes/README.md)
 [![Status](https://img.shields.io/badge/Status-production--verified-2ea44f.svg)](docs/troubleshooting.md)
@@ -25,18 +25,25 @@ repository; the "brain" is Hermes via
   custom pt-trained `ok hermes`) — four phrasings wake it in practice — or
   push-to-talk (BOOT button ≥600 ms), local STT, Hermes answers and the panel
   speaks back.
-- **HUD**: animated "arc reactor" state ring on the display — color + speed per
-  state (idle/listening/thinking/speaking/error). Idle is **white** (it used to
-  share the cyan of "speaking", which made the two states indistinguishable on
-  the real panel) and the time shows in the **centre** of the ring. Since
-  v0.15.5 the screen is minimal: no weekday, no top clock, no date, no battery
-  footer — those values are still published as HA sensors, only the pixels went
-  away.
+- **Screen**: a small **robot face** drawn with **LVGL** (480×320) — head, visor,
+  antenna and a chest caption that change with the state: idle, listening,
+  thinking, speaking, music, night, no connection and alarm. It blinks, the eyes
+  glance up while it thinks, sound waves and thought dots animate, the clock stays
+  at full size, and during music the track/station name **scrolls across the
+  chest**. Every widget is generated from source in [`geradores/`](geradores/) —
+  see [`docs/screen.md`](docs/screen.md).
+- **Timer**: three timer slots driven by HA (`timer.*`), with the countdown shown in
+  red under the clock and a **10 s alarm** with an animated face at the end. The
+  firmware owns the screen and the alarm; the voice side ("set a 10 minute timer")
+  is three HA intent scripts + sentences — see
+  [`docs/screen.md`](docs/screen.md) §The timer for the entities involved.
 - **Agent-written HUD line**: the agent can put **one line of text on the screen**
   without saying it out loud — it embeds a `[HW:/display/info:{"text":"..."}]` marker in
   its reply, the HA conversation component strips it before TTS and writes it to the
-  `Linha HUD` entity. Auto-clears after 45 s and when a new wake word opens the mic.
+  `Linha HUD` entity (auto-clears after 45 s and when a new wake word opens the mic).
   Needs a local patch on the HA component: [`docs/hud-markers.md`](docs/hud-markers.md).
+  ⚠️ On the LVGL face the text is written but **not drawn yet** — the entity and the
+  marker pipeline work, the widget is pending.
 - **Conversation mode**: after each answer the panel reopens the microphone for
   **7 s**, so follow-up phrases need no wake word. The chain is capped by a
   `number` entity (**10** by default, 0 disables it) — the cap is a safety brake,
@@ -45,7 +52,11 @@ repository; the "brain" is Hermes via
   engine in **0.01-0.2 s**, never by the LLM (multi-command sentences and
   transcribed noise are handled locally too — see `docs/performance.md` §2).
 - **Media player**: the panel speaker is a HA `media_player` — announcements,
-  TTS messages and radio/music work, with a media screen (title + volume ring).
+  TTS messages and radio/music work. The screen switches to the robot listening to
+  music (closed eyes, notes) and the title scrolls on the chest; the name comes
+  from the URL the panel receives, with a small HA-side service filling it in for
+  Radio Browser stations (which have no URL of their own) — see
+  [`docs/media-player.md`](docs/media-player.md).
 - **Battery**: real voltage ADC (GPIO6) with a Li-ion %, plus charging status.
 - **Volume**: one source of truth, sized UI scale → audible floor →
   distortion ceiling, survives reboots.
@@ -74,9 +85,13 @@ firmware, hence the name). The MAX35-TV-W is the 3.5" reversion here.
 | | |
 |---|---|
 | ![Product](assets/panel-in-action.jpg) | ![Product](assets/product-1.webp) |
-| Real panel running this HUD (idle) | Front view (AliExpress) |
-| ![Product](assets/product-2.webp) | ![HUD states](assets/preview-painel.png) |
-| Board view (AliExpress) | The 5 HUD states + media screen (rendered, v0.15.5) |
+| Real panel (photo taken on the earlier ring HUD, v0.15.x) | Front view (AliExpress) |
+| ![Product](assets/product-2.webp) | ![Robot face states](assets/preview-cara.png) |
+| Board view (AliExpress) | The robot face — 8 states, rendered from the generator |
+
+The previous **round-face HUD** (ring + centre clock, the series up to v0.15.27) is
+still buildable from the [`v0.15.27`](https://github.com/byjaps/esp32-max35-tv/releases/tag/v0.15.27)
+tag; the robot face starts at v0.16.0 and is what the current releases ship.
 
 ### Disabled features
 
@@ -94,7 +109,7 @@ to re-enable:
 ## Getting started
 
 **You need**: Home Assistant (with an Assist pipeline) and this panel. Building the
-firmware yourself needs ESPHome **2026.9.1** (Python 3.12+); or just hand the
+firmware yourself needs ESPHome **2026.10.0** (Python 3.12+); or just hand the
 repository to an agent and let it do the whole thing (below).
 
 ### Easiest — hand it to your Hermes agent
@@ -110,7 +125,7 @@ running instead of trusting the upload.
 Something like this is enough:
 
 > Clone `https://github.com/byjaps/esp32-max35-tv` and set up the MAX35-TV voice
-> panel for my Home Assistant. Build with ESPHome 2026.9.1, create the secrets
+> panel for my Home Assistant. Build with ESPHome 2026.10.0, create the secrets
 > file, flash it over the network, then confirm on the device which firmware
 > version is really running.
 
@@ -143,7 +158,7 @@ few minutes and the agent path needs nothing else.
 5. Set up the Assist pipeline to use Hermes as its conversation agent, and select
    the panel as the satellite that uses that pipeline.
 
-> ✅ **Builds and runs on ESPHome 2026.9.1** (the current release). The board
+> ✅ **Builds and runs on ESPHome 2026.10.0** (the current release). The board
 > runs it stable for hours. Validate any change with `esphome config` before
 > flashing. After any flash the panel may reboot 2–3 times in the first ~45 min
 > while the new image settles — that is expected, not a defect
@@ -152,7 +167,8 @@ few minutes and the agent path needs nothing else.
 ## Repository layout
 
 ```
-esp32-max35-tv.yaml      ESPHome firmware (cleaned, no secrets)
+esp32-max35-tv.yaml      ESPHome firmware (generated — no secrets)
+geradores/               generator for the LVGL screen + frozen v0.15.27 base
 secrets.yaml.example     credentials template (copy to secrets.yaml)
 hardware/                official datasheets/schematic + links
 scripts/                 diagnostics/helpers (check panel, battery, preview)
@@ -160,6 +176,11 @@ assets/                  screen renders + product photos
 docs/                    setup + hardware-specific guides
 hermes/                  Hermes <-> HA voice integration (rusty4444)
 ```
+
+`esp32-max35-tv.yaml` is **generated**: `python3 geradores/monta_lvgl.py` rebuilds it
+from the frozen pre-LVGL base plus the screen generator, and the output is
+byte-identical to the file in this repo. Edit the generator, not the YAML, when
+changing the screen; `scripts/preview_lvgl.py` renders the result offline.
 
 ## Credits
 
@@ -175,8 +196,10 @@ This project stands on the shoulders of several people:
 - **Spotpear** — the board, the official wiki and the hardware documentation.
 - **[`RealDeco/xiaozhi-esphome`](https://github.com/RealDeco/xiaozhi-esphome)** —
   the reference ESPHome config for this board (pins, codecs, wake word).
-- **[`eadmin2/jarvis_ai`](https://github.com/eadmin2/jarvis_ai)** — the HUD
-  "arc reactor" animation, ported from its canvas to the ESPHome display.
+- **[`eadmin2/jarvis_ai`](https://github.com/eadmin2/jarvis_ai)** — the design
+  behind both screens: the "arc reactor" HUD of the earlier series and the robot
+  face with its animations (blink, glance, sound waves, thought dots, notes, "Z",
+  alarm rings), re-drawn as LVGL widgets measured from its mockups.
 - **[`miketomkins`](https://github.com/miketomkins/hey-hermes-wakeword-model)** —
   the "hey hermes" wake word model (tested, not retained; see `docs/wake-word.md`).
 - **[microwakeword.com](https://microwakeword.com)** — the wake word **library and
@@ -205,6 +228,7 @@ this invite link —
 - [`docs/setup-hermes.md`](docs/setup-hermes.md) — flashing + wiring the panel to Hermes
 - [`docs/wake-word.md`](docs/wake-word.md) — the two wake words, where to get more, cutoffs, false triggers
 - [`docs/performance.md`](docs/performance.md) — voice latency: measurements, the watchdog, and where the real wins are
+- [`docs/screen.md`](docs/screen.md) — the LVGL robot face: states, animations, how it is generated and what breaks it
 - [`docs/audio.md`](docs/audio.md) — shared I2S bus, ES8311 DAC, volume, TTS
 - [`docs/battery.md`](docs/battery.md) — battery ADC, charge curve, charging
 - [`docs/media-player.md`](docs/media-player.md) — media player, metadata, announcements

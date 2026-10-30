@@ -12,3 +12,6 @@ __pycache__/
 
 # --- OS ---
 .DS_Store
+# --- Generator output (rebuilt by geradores/monta_lvgl.py) ---
+geradores/bloco_lvgl.yaml
+preview/

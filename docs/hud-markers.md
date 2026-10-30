@@ -8,6 +8,11 @@ conversation component strips the marker out of the speech and writes the text i
 Feature version: **v0.15.16** (line), **v0.15.17** (auto-clear).
 Requires a **local patch** on the Hermes HA component — see [Install](#install).
 
+> ⚠️ **Status on the LVGL face (v0.16.0 and later, including v0.17.13):** the entity,
+> the marker stripping and the 45 s auto-clear all work, but the robot face has **no
+> widget for this line yet** — the text is written and never drawn. It was drawn by the
+> round-face HUD (≤ v0.15.27). Treat the drawing as pending, not as a supported feature.
+
 ## Why it lives in Home Assistant, not on the panel
 
 The panel never sees text: it receives **audio** and state events from the Assist
@@ -40,7 +45,7 @@ Agent reply (text)                         HA conversation component            
 
 | Marker | Home Assistant service | Notes |
 |---|---|---|
-| `/display/info` | `text.set_value` on `text.mini_tv_linha_hud` | `{"text": "..."}`, max 60 chars; firmware truncates to 20 (ring) / 14 (media screen) |
+| `/display/info` | `text.set_value` on the `Linha HUD` text entity | `{"text": "..."}`, max 60 chars. ⚠️ Not drawn by the LVGL face yet — see the status note at the top. |
 | `/light` | `light.turn_on` on the screen light | `{"brightness_pct": 0-100}` |
 | `/volume` | `number.set_value` on the panel volume | `{"value": 0-100}` |
 
@@ -63,7 +68,7 @@ is exactly the kind of thing to check rather than guess.
 
 The marker handling is a **local patch** on
 [`rusty4444/hermes-voice-ha-integration`](https://github.com/rusty4444/hermes-voice-ha-integration)
-v0.0.15 — it is not upstream. Files in [`hermes/`](hermes/):
+v0.0.15 — it is not upstream. Files in [`hermes/`](../hermes/):
 
 - `hud-markers/hw_markers.py` → `/config/custom_components/hermes/hw_markers.py`
 - `conversation.py.diff` → three additions to `conversation.py` (import, marker strip +
@@ -141,15 +146,21 @@ entity in `ROTAS` that does not exist. This is the cheap answer to a real failur
 firmware rename, a marker dies silently because the entity id changed (it happened on
 23/10 with `text.mini_tv_linha_hud`).
 
-## Ring colour for "a tool is running" (v0.15.18)
+## The "a tool is running" signal on the LVGL face (v0.15.18 → v0.16.0+)
 
 The `voice_assistant` only knows five states; whether the *brain* is running a tool is something
 only Hermes knows. `switch.*_a_trabalhar` (template switch, optimistic, `ALWAYS_OFF`) is turned on
 by the `painel-trabalho` plugin (hook `pre_tool_call`, only in the `ha-voice` session — a Telegram
-tool can run for minutes) and off 3.5 s after the last tool. While `va_state == 2` **and** the
-switch is on, the ring is **violet `0xB36BFF`** at 160 °/s instead of the amber "thinking" ring.
+tool can run for minutes) and off 3.5 s after the last tool. In the old ring HUD that switch turned
+the ring **violet `0xB36BFF`**.
+
+The robot face has no ring. What it shows is the **antenna LED**: green while the panel is
+"thinking", red from `on_intent_start` until the intent is answered (`on_intent_end`) — in practice
+red means the request went to the agent, because local intents answer in milliseconds. Both are
+gated on `ecra_est == 2`, so the LED never changes colour while the face is idle or speaking.
 
 - `post_tool_call` does not receive `session_id`, so the close is a timer, not a counter.
-- The firmware resets the switch when the panel returns to idle — without that, a plugin that dies
-  mid-turn leaves the ring violet forever.
-- The colour is not exported to HA: verify the switch by API, the colour with your eyes.
+- The switch survives as the latch that catches a plugin dying mid-turn: the firmware turns it off
+  whenever the panel returns to idle.
+- Neither the LED nor the switch colour is exported to HA: verify the switch by API, the rest with
+  your eyes.

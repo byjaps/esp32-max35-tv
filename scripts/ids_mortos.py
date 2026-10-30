@@ -1,8 +1,11 @@
-"""Encontra globais/ids definidos no YAML do painel que nunca são usados."""
+"""Encontra globais/ids definidos no YAML do painel que nunca são usados.
+
+Uso: python3 ids_mortos.py [caminho/para/esp32-max35-tv.yaml]
+"""
 import re
 import sys
 
-P = "/home/hermes/homelab/esphome-build/esp32-max35-tv.yaml"
+P = sys.argv[1] if len(sys.argv) > 1 else "esp32-max35-tv.yaml"
 src = open(P, encoding="utf-8").read()
 
 # bloco globals:

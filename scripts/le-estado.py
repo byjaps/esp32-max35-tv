@@ -16,7 +16,7 @@ import aioesphomeapi
 
 from _panel_config import PANEL_HOST, PANEL_PORT, PANEL_API_KEY, require_panel
 
-QUERO = ("usb", "bateria", "carregador", "uptime", "volume", "fps")
+QUERO = ("usb", "bateria", "carregador", "uptime", "volume", "temporizador")
 
 
 async def main(segs):

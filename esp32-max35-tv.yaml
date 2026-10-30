@@ -72,14 +72,12 @@
 #   + ecra de media: o anel passa a mostrar o VOLUME (arco verde) + "A TOCAR",
 #     titulo, estacao e barra
 #   + rodape com bateria; relogio no topo
-#   + a rotacao e ajustavel EM TEMPO REAL pelo `number` "Animação (fps)"
-#     (display em `update_interval: never` + script `ecra_loop`): e o que
-#     permite medir o efeito do SPI da tela no audio sem recompilar
 #   + removido o switch "Speaker Enabled" (disparava speaker.mute_off no
 #     arranque e disputava o barramento I2S — ruido no log, sem funcao)
 #   + sensor de Uptime (para confirmar reinicios inesperados)
-#   ⚠️ SEM LVGL de proposito: um anel com quads + primitivas nativas custa
-#      menos RAM do que reescrever o ecra todo em widgets lv_arc.
+#   ⚠️ ATÉ v0.16.0 SEM LVGL de proposito (anel com quads em primitivas nativas);
+#      desde a v0.16.0 quem desenha é o LVGL, gerado por `gera_face.py` a partir
+#      do manifest do mockup. Ver a skill `esphome-esp32-voice-panel` → ecra-lvgl.md.
 #
 #   ℹ️ 2026-10-05: a serie 0.15.x e feita com o ESPHome do `.venv313` (cron de
 #      segunda + `pip install --upgrade`). A 0.15.5 = 2026.9.0; a 0.15.6 =
@@ -212,7 +210,7 @@ substitutions:
   vol_min: "0.35"
   vol_max: "0.75"
   vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.16.1"   # versao do firmware (project.version + sensor no HA)
+  fw_version: "0.17.13"   # versao do firmware (project.version + sensor no HA)
 
 esphome:
   name: ${name}
@@ -408,6 +406,16 @@ binary_sensor:
 # --- ESTADO (HUD) ------------------------------------------------------------
 # 0=em espera 1=a ouvir 2=a pensar 3=a falar 4=erro
 globals:
+  # v0.17.0 — trava as cadeias on_stop enquanto se mudam estados.
+  - id: anim_ok
+    type: bool
+    restore_value: false
+    initial_value: 'true'
+  # v0.16.3 — instante em que o alarme comecou (rede de seguranca).
+  - id: alarme_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
   # v0.16.0 — estado aplicado ao ecra LVGL (0 espera .. 7 alarme).
   - id: ecra_est
     type: int
@@ -424,11 +432,11 @@ globals:
     type: int
     restore_value: no
     initial_value: "-1"
-  # 29/10/2026 — pre-aviso do alarme: o Joel viu o relogio branco durante uns
+  # 29/10/2026 — pre-aviso do alarme: o autor viu o relogio branco durante uns
   # segundos depois do 0, porque a ordem «timer.finished -> HA -> switch ->
   # desenho» leva 1-3 s. Marcamos o instante em que faltavam <=2 s e o ecra
   # passa a desenhar o despertador ate 8 s depois disso (ou ate o switch ligar).
-  # 29/10: o pre-aviso comecou em 2 s e o Joel achou cedo — ficou em 1 s.
+  # 29/10: o pre-aviso comecou em 2 s e o autor achou cedo — ficou em 1 s.
   - id: alarme_pre_ms
     type: uint32_t
     restore_value: no
@@ -482,13 +490,6 @@ globals:
     type: float
     restore_value: no
     initial_value: "75.0"
-  # Angulo acumulado da animacao do anel, em graus. Avanca por TEMPO (graus por
-  # segundo, conforme o estado) e nao por frame: assim mexer no `number`
-  # "Animação (fps)" muda a fluidez, nao a velocidade da animacao.
-  - id: rot_deg
-    type: float
-    restore_value: no
-    initial_value: "0"
   # Instante (millis) ate ao qual o HUD mostra o VOLUME em vez do estado de voz.
   # E o retorno visual dos cliques no botao (ver o script vol_step): sem isto, um
   # clique para mexer no volume nao dava sinal NENHUM quando nao ha media a tocar.
@@ -510,102 +511,110 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
-  # Ritmo do ecrã escolhido pelo utilizador, guardado enquanto a conversa decorre
-  # (hud_set põe a animação a 0 e repõe este valor no fim). 0 = nada guardado.
-  - id: fps_user
-    type: float
-    restore_value: no
-    initial_value: "0"
 
 script:
-  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL (v0.16.0) -------------------
-  # Estados do desenho do Jarvis:
+  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL ---------------------------------
   #   0 espera · 1 a ouvir · 2 a pensar · 3 a falar · 4 a tocar · 5 a dormir
   #   6 sem ligação · 7 alarme do temporizador
-  # `ui_base` põe tudo no estado neutro; cada estado só acrescenta o que muda.
-  # É chamado pelo hud_set (voz), pelo media player, pelo switch do alarme e no
-  # arranque — nunca em ciclo.
+  # `ui_base` repõe tudo e arranca a respiração; cada estado acrescenta as suas
+  # animações. Só corre quando o estado muda (nunca em ciclo).
   - id: ui_base
     then:
-      - lvgl.widget.show: [olho_e, olho_d, boca_sorriso, relogio_small]
+      - lambda: "id(anim_ok) = false;"
+      - lvgl.animation.stop:
+          [tremer, onda_a, inclina_a, inclina_b, balanca_a, balanca_b,
+           boca_a, boca_b, ponto1_anima, ponto2_anima, ponto3_anima,
+           nota_a, nota_b, z_a, z_b, z_c,
+           anel_1, anel_2, anel_3, olhos_saltam, led_pulsa]
+      - lambda: "id(anim_ok) = true;"
+      # Cabeca e robo voltam ao sitio: parar uma animacao a meio deixava o x/y
+      # deslocados (o robo ficava fora do centro depois de tremer).
+      - lvgl.widget.update: {id: cabeca, transform_rotation: 0}
+      - lvgl.widget.update: {id: robo, x: 0, y: 0}
+      - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_big, led_antena]
       - lvgl.widget.hide:
-          [relogio_big, olho_fechado_e, olho_fechado_d, x1, x2, x3, x4,
-           boca_circ, boca_triste, onda1, onda2, onda3, ponto1, ponto2, ponto3,
-           sobrancelha_e, sobrancelha_d]
-      - lvgl.animation.stop: [falar, tremer_alarme, pulsar_ondas]
-      - lvgl.widget.update: {id: corpo,    bg_color: 0xEAEFF5, bg_grad_color: 0xC1CAD6}
-      - lvgl.widget.update: {id: ecra,     bg_color: 0x090E15}
-      - lvgl.widget.update: {id: orelha_e, bg_color: 0xCED8E6}
-      - lvgl.widget.update: {id: orelha_d, bg_color: 0xCED8E6}
-      - lvgl.widget.update: {id: ponta,    bg_color: 0xE1FCFF}
-      - lvgl.label.update: {id: legenda, text: "", text_color: 0xFFFFFF}
+          [relogio_small, olho_fechado_e, olho_fechado_d, x_0_0, x_0_1, x_1_0, x_1_1,
+           sobrancelha_e, sobrancelha_d, sobrancelha_corte_e, sobrancelha_corte_d,
+           boca_aberta, boca_aberta_furo, boca_triste, boca_triste_corte,
+           onda1, onda1_corte, onda2, onda2_corte, onda3, onda3_corte,
+           ponto1, ponto2, ponto3, anel1, anel2, anel3, nota1, nota2, z1, z2, z3,
+           excl_esq_barra, excl_esq_ponto, excl_dir_barra, excl_dir_ponto]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xE1FCFF, opa: 100%}
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x5A6E82}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x5A6E82}
+      - lvgl.label.update: {id: legenda, text: "", text_color: 0x2F3947}
 
-  # 0 — em espera: relógio grande (canto superior esquerdo), sem legenda
   - id: ui_espera
     then:
+      # Relogio sempre no tamanho grande (pedido do autor, 29/10): nao ha troca
+      # de fonte entre estados — so a cor muda no estado de noite.
       - lvgl.widget.hide: relogio_small
       - lvgl.widget.show: relogio_big
 
-  # 1 — a ouvir: ondas sonoras a pulsar
   - id: ui_ouvir
     then:
-      - lvgl.label.update: {id: legenda, text: "A OUVIR..."}
-      - lvgl.widget.show: [onda1, onda2, onda3, sobrancelha_e, sobrancelha_d]
-      - lvgl.animation.start: pulsar_ondas
+      - lvgl.label.update: {id: legenda, text: "A OUVIR"}
+      - lvgl.widget.show: [sobrancelha_e, sobrancelha_d, sobrancelha_corte_e,
+                           sobrancelha_corte_d, onda1, onda1_corte, onda2,
+                           onda2_corte, onda3, onda3_corte]
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x40E0FF}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x40E0FF}
+      - lvgl.animation.start: onda_a
 
-  # 2 — a pensar: pontos na diagonal
   - id: ui_pensar
     then:
-      - lvgl.label.update: {id: legenda, text: "A PENSAR..."}
+      - lvgl.label.update: {id: legenda, text: "A PENSAR"}
       - lvgl.widget.show: [ponto1, ponto2, ponto3]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0x36E27B}
+      - lvgl.animation.start: [inclina_a, ponto1_anima, ponto2_anima, ponto3_anima]
 
-  # 3 — a falar: boca animada
   - id: ui_falar
     then:
       - lvgl.label.update: {id: legenda, text: "A FALAR"}
-      - lvgl.widget.hide: boca_sorriso
-      - lvgl.widget.show: boca_circ
-      - lvgl.animation.start: falar
+      - lvgl.widget.hide: [boca_sorriso, boca_corte]
+      - lvgl.widget.show: [boca_aberta, boca_aberta_furo]
+      - lvgl.animation.start: boca_a
 
-  # 4 — a tocar: olhos fechados e felizes (a legenda leva o título, no tique de 1 s)
   - id: ui_musica
     then:
-      - lvgl.widget.hide: [olho_e, olho_d]
-      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d, nota1, nota2]
+      - lvgl.widget.update: {id: led_orelha_e, bg_color: 0x40E0FF}
+      - lvgl.widget.update: {id: led_orelha_d, bg_color: 0x40E0FF}
+      - lvgl.animation.start: [balanca_a, nota_a, nota_b]
 
-  # 5 — a dormir: tudo escurecido
   - id: ui_noite
     then:
-      - lvgl.label.update: {id: legenda, text: "A DORMIR"}
-      - lvgl.widget.hide: [olho_e, olho_d]
-      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
-      - lvgl.widget.update: {id: corpo,    bg_color: 0xB1B4B9, bg_grad_color: 0x979EA7}
-      - lvgl.widget.update: {id: orelha_e, bg_color: 0xAEB4BB}
-      - lvgl.widget.update: {id: orelha_d, bg_color: 0xAEB4BB}
-      - lvgl.widget.update: {id: ponta,    bg_color: 0x3A414B}
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+      - lvgl.widget.show: [olho_fechado_e, olho_fechado_d, z1, z2, z3]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0x3A5A66}
+      - lvgl.widget.update: {id: casca, bg_color: 0xB1B4B9, bg_grad_color: 0x979EA7}
+      - lvgl.animation.start: [z_a, z_b, z_c]
 
-  # 6 — sem ligação: olhos em X, boca triste, antena vermelha
   - id: ui_erro
     then:
-      - lvgl.label.update: {id: legenda, text: "SEM LIGAÇÃO", text_color: 0xFF4D4D}
-      - lvgl.widget.hide: [olho_e, olho_d, boca_sorriso]
-      - lvgl.widget.show: [x1, x2, x3, x4, boca_triste]
-      - lvgl.widget.update: {id: ponta, bg_color: 0xFF4D4D}
+      - lvgl.label.update: {id: legenda, text: "SEM LIGAÇÃO"}
+      - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte]
+      - lvgl.widget.show: [x_0_0, x_0_1, x_1_0, x_1_1, boca_triste, boca_triste_corte]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
 
-  # 7 — alarme do temporizador: olhos abertos, ondas e a tremer
   - id: ui_alarme
     then:
-      - lvgl.label.update: {id: legenda, text: "ALARME", text_color: 0xFF4D4D}
-      - lvgl.widget.hide: boca_sorriso
-      - lvgl.widget.show: [boca_circ, onda1, onda2, onda3]
-      - lvgl.animation.start: [tremer_alarme, pulsar_ondas]
+      - lvgl.label.update: {id: legenda, text: "ALARME", text_color: 0xFF6060}
+      - lvgl.widget.hide: [boca_sorriso, boca_corte]
+      - lvgl.widget.show: [boca_aberta, boca_aberta_furo, anel1, anel2, anel3,
+                           excl_esq_barra, excl_esq_ponto,
+                           excl_dir_barra, excl_dir_ponto]
+      - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
+      - lvgl.animation.start: [tremer, olhos_saltam, led_pulsa, boca_a,
+                               anel_1, anel_2, anel_3]
 
   - id: ui_aplica
     then:
       - lambda: |-
           int est = id(va_state);
           // O alarme manda em tudo; o media só aparece fora de uma conversa
-          // (o TTS também passa pelo media player — ver o comentário antigo).
+          // (o TTS também passa pelo media player).
           if (id(alarme_tocar).state) est = 7;
           else if (id(mp_playing) && est == 0) est = 4;
           id(ecra_est) = est;
@@ -653,6 +662,19 @@ script:
                                                 - script.execute: ui_ouvir
                                               else:
                                                 - script.execute: ui_espera
+
+  # Piscar de olhos: tapa os olhos 110 ms e volta a abrir (só em espera).
+  - id: ui_piscar
+    then:
+      - if:
+          condition:
+            lambda: "return id(ecra_est) == 0;"
+          then:
+            - lvgl.widget.hide: [olho_e, olho_d, brilho_e, brilho_d]
+            - lvgl.widget.show: [olho_fechado_e, olho_fechado_d]
+            - delay: 110ms
+            - lvgl.widget.hide: [olho_fechado_e, olho_fechado_d]
+            - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d]
   # v0.15.17 — temporizador da Linha HUD. `mode: restart` faz cada valor novo
   # recomecar a contagem; o update("") nao volta a armar o ciclo (o on_value
   # so executa com texto nao vazio).
@@ -668,25 +690,10 @@ script:
     parameters:
       state: int
     then:
-      # v0.15.12 — O ECRÃ CALA-SE DURANTE A CONVERSA.
-      # Medido a 18/10: cada frame custa ~150 ms de loop principal (mipi_spi,
-      # 307 KB por frame) e a 4 fps isso é ~60% do tempo a desenhar. O sintoma
-      # era áudio perdido no arranque do turno ("Cannot receive audio, buffer is
-      # full") e transcrições com o início cortado — "agora desliga" foi ouvido
-      # como "Porta de liga". Com a animação a 0 durante a escuta/pensamento/fala
-      # o ecrã continua a atualizar 1x/s (ver ecra_loop) e o micro tem o CPU todo.
-      # O ritmo escolhido pelo utilizador é reposto quando volta a "em espera".
+      # v0.17.12 — o antigo "cala o ecrã durante a conversa" (governar o desenho
+      # por fps, v0.15.12) saiu com o `number` Animação (fps): quem desenha é o
+      # LVGL e o custo por frame já não se governa por ali.
       - lambda: |-
-          auto *num = id(anim_fps);
-          if (state != 0) {
-            if (num->state > 0.0f && id(fps_user) <= 0.0f) {
-              id(fps_user) = num->state;
-              num->make_call().set_value(0.0f).perform();
-            }
-          } else if (id(fps_user) > 0.0f) {
-            num->make_call().set_value(id(fps_user)).perform();
-            id(fps_user) = 0.0f;
-          }
           // Fail-safe do anel «a trabalhar»: em espera nao ha ferramenta nenhuma a
           // correr. Se o plugin morrer a meio do turno, o violeta nao fica preso.
           if (state == 0 && id(trabalho).state) {
@@ -805,6 +812,7 @@ script:
   - id: mp_stop_wake
     then:
       - lambda: "id(mp_playing) = true; id(mp_armado_ms) = millis();"
+      - script.execute: {id: ui_aplica}
       - if:
           condition:
             micro_wake_word.is_running:
@@ -882,25 +890,6 @@ number:
             - media_player.volume_set:
                 id: painel_mp
                 volume: !lambda "return x / 100.0f;"
-
-  # Ritmo da animacao do ecra (ver script ecra_loop). 0 = anel parado, mas o
-  # ecra continua a atualizar 1x/s (relogio e mudancas de estado).
-  # ⚠️ Cada frame custa ~150 ms (o mipi_spi empurra o buffer todo, 307 KB). Em
-  # 4 fps sao ~60% do tempo do loop principal so a desenhar — mexer nesta
-  # entidade e a forma de equilibrar fluidez/CPU sem recompilar. Subir acima de
-  # 6-7 so vale a pena se se confirmar que a voz nao perde qualidade.
-  - platform: template
-    name: "Animação (fps)"
-    id: anim_fps
-    icon: "mdi:speedometer"
-    entity_category: config
-    optimistic: true
-    unit_of_measurement: "fps"
-    min_value: 0
-    max_value: 15
-    step: 1
-    initial_value: 4
-    restore_value: true
 
 # Modo conversa (v0.15.9): quantas continuacoes seguidas sem wake word.
   # 0 = desligado (comportamento antigo: cada ordem exige a wake word).
@@ -995,14 +984,27 @@ switch:
     optimistic: true
     restore_mode: ALWAYS_OFF
     on_turn_on:
+      - lambda: "id(alarme_ms) = millis();"
       - script.execute: {id: ui_aplica}
     on_turn_off:
       - script.execute: {id: ui_aplica}
 
 interval:
   # --- CONTAGEM DO TEMPORIZADOR (1 s) ---------------------------------------
+  # Piscar de olhos (so em espera). 4 s e o ritmo do mockup do Jarvis.
+  - interval: 4s
+    then:
+      - script.execute: ui_piscar
+
   - interval: 1s
     then:
+      - if:
+          condition:
+            lambda: |-
+              return id(alarme_tocar).state && id(alarme_ms) > 0 &&
+                     (millis() - id(alarme_ms)) > 15000;
+          then:
+            - switch.turn_off: alarme_tocar
       # Cara (v0.16.0): o relogio e a contagem do temporizador sao etiquetas
       # LVGL — atualizam-se aqui, 1x/s. O LVGL so redesenha se o texto mudar e
       # so a area da etiqueta (uns 60x20 px), nao o ecra todo.
@@ -1031,15 +1033,10 @@ interval:
             if (r >= 3600) snprintf(b, sizeof(b), "%d:%02d:%02d", r / 3600, (r % 3600) / 60, r % 60);
             else           snprintf(b, sizeof(b), "%d:%02d", (r / 60) % 60, r % 60);
             return std::string(b);
-      - if:
-          condition:
-            lambda: "return id(va_state) == 0 && !id(mp_playing) && !id(alarme_tocar).state;"
-          then:
-            - lvgl.widget.show: relogio_big
-            - lvgl.widget.hide: relogio_small
-          else:
-            - lvgl.widget.hide: relogio_big
-            - lvgl.widget.show: relogio_small
+      # Relogio: SEMPRE o tamanho grande (pedido do autor, 29/10). O `relogio_small`
+      # fica escondido para sempre; a troca de fonte por estado saiu.
+      - lvgl.widget.show: relogio_big
+      - lvgl.widget.hide: relogio_small
       # Legenda do media: «A TOCAR · <titulo>» (o titulo vem do HA)
       - if:
           condition:
@@ -1049,8 +1046,10 @@ interval:
                 id: legenda
                 text: !lambda |-
                   std::string t = id(mp_titulo).state;
+                  // Nome da rádio/faixa, a rolar no peito (long_mode:
+                  // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
                   if (t.empty()) return std::string("A TOCAR");
-                  return "A TOCAR · " + t;
+                  return t;
       - lambda: |-
           auto t = id(sntp_time).now();
           std::string s = id(contagem_fim).state;
@@ -1062,7 +1061,7 @@ interval:
           id(contagem_rest) = r;
 
           // Pre-aviso do despertador (ver comentario nos globals).
-          if (r >= 0 && r <= 1) id(alarme_pre_ms) = millis() ? millis() : 1;   // 1 s (o Joel achou 2 s cedo)
+          if (r >= 0 && r <= 1) id(alarme_pre_ms) = millis() ? millis() : 1;   // 1 s (o autor achou 2 s cedo)
           bool pre = id(alarme_pre_ms) != 0 && (millis() - id(alarme_pre_ms) < 8000);
           if (id(alarme_tocar).state) id(alarme_pre_ms) = 0;   // ja toca: manda o switch
           id(ecra_alarme) = id(alarme_tocar).state || pre;
@@ -1072,8 +1071,8 @@ interval:
           static bool dbg_ativo = false;
           char b[96];
           if (r >= 0 || id(ecra_alarme) || id(alarme_tocar).state) {
-            snprintf(b, sizeof(b), "rest=%d est=%d mp=%d al=%d ecra=%d fim=%s", r, id(va_state),
-                     (int) id(mp_playing), (int) id(alarme_tocar).state, (int) id(ecra_alarme), s.c_str());
+            snprintf(b, sizeof(b), "rest=%d est=%d mp=%d al=%d ecra=%d ec=%d fim=%s", r, id(va_state),
+                     (int) id(mp_playing), (int) id(alarme_tocar).state, (int) id(ecra_alarme), (int) id(ecra_est), s.c_str());
             id(dbg_contagem).publish_state(b);
             dbg_ativo = true;
           } else if (dbg_ativo) {
@@ -1463,9 +1462,11 @@ media_player:
       - script.execute: {id: mp_stop_wake}
     on_play:
       - script.execute: {id: mp_stop_wake}
+      - script.execute: {id: ui_aplica}
     on_idle:
       - lambda: "id(mp_playing) = false;"
       - script.execute: {id: mp_idle_resume}
+      - script.execute: {id: ui_aplica}
       # Volta a OFF para rearmar o on_turn_on. OFF no HA e normal neste
       # componente: nao impede play_media/anuncios (ver media_player.h,
       # USE_SPEAKER_MEDIA_PLAYER_ON_OFF).
@@ -1671,6 +1672,20 @@ voice_assistant:
   on_stt_end:
     - logger.log: "STT terminado"
     - script.execute: {id: hud_set, state: 2}
+  # LED da antena: verde = a pensar (inclui os intents locais, que nunca chegam
+  # ao agente); vermelho = o pedido foi entregue ao agente e estamos a espera.
+  on_intent_start:
+    - if:
+        condition:
+          lambda: "return id(ecra_est) == 2;"
+        then:
+          - lvgl.widget.update: {id: led_antena, bg_color: 0xFF6060}
+  on_intent_end:
+    - if:
+        condition:
+          lambda: "return id(ecra_est) == 2;"
+        then:
+          - lvgl.widget.update: {id: led_antena, bg_color: 0x36E27B}
   on_tts_start:
     - logger.log: "A processar resposta..."
     - script.execute: {id: hud_set, state: 3}
@@ -1745,7 +1760,11 @@ display:
   - platform: mipi_spi
     id: main_display
     model: ST7796
-    data_rate: 40MHz
+    # v0.17.11 — 40 -> 80 MHz: o mipi_spi só oferece 40 ou 80 para o ST7796 (o
+    # 60 é recusado no `config`). A 80 MHz o frame completo desce de ~61 ms
+    # para ~31 ms, que é o que se nota como "arrasto" ao mover o robô inteiro
+    # (o LVGL invalida 480x320 e o ecrã atualiza-se em faixas).
+    data_rate: 80MHz
     invert_colors: true
     transform:
       mirror_x: true
@@ -1757,489 +1776,933 @@ display:
     cs_pin: GPIO5
     dc_pin: GPIO47
     rotation: ${rotate_display}
-    # v0.16.0 (29/10/2026) — O ECRÃ PASSOU A SER LVGL.
-    # Porquê: com o desenho por lambda cada atualizacao mandava o frame INTEIRO
-    # (307 KB) para o painel mipi_spi: ~150 ms medidos, ou seja 4-6 fps. Uma cara
-    # que se mexe a 5 fps le-se como avaria. O LVGL so redesenha e manda as
-    # ZONAS QUE MUDARAM (dois olhos = ~10 KB), o que da animacao fluida e gasta
-    # MENOS barramento do que o desenho antigo.
-    # `update_interval: never` + `auto_clear_enabled: false` sao obrigatorios:
-    # quem manda desenhar e o proprio LVGL (ver componente `lvgl`).
+    # LVGL manda desenhar: nada de update_interval nem de lambda aqui.
     update_interval: never
     auto_clear_enabled: false
 
-# --- CARA DO ROBÔ (LVGL) -----------------------------------------------------
-# Desenho do Jarvis (mockups em Agentes/Jarvis/mockups-cara-2026-10-29 do cofre).
-# Todas as coordenadas foram MEDIDAS nos PNG (mede_mockup.py, componentes conexas
-# por cor) e o preview em PIL (preview_face.py) usa exatamente os mesmos valores —
-# se um dia a cara mudar, muda-se primeiro o preview e só depois isto.
-#
-# Estrutura:
-#   pagina (480x320, preto)
-#     robo        — grupo que respira/treme (mover ESTE, nunca os filhos)
-#       antena, ponta, orelha_e, orelha_d, corpo, ecra
-#       olho_e, olho_d (+ reflexos)      estados normais
-#       olho_fechado_e/d                 a dormir / a tocar
-#       olho_x_* (4 barras)              sem ligacao
-#       boca_bar / boca_circ / boca_triste
-#     ondas (arcos)  quando ouve ou no alarme
-#     pontos (3 circulos) quando pensa
-#     relogio_big / relogio_small / legenda / temporizador
+# =========================================================================
+# CARA DO ROBÔ — geometria do manifest do Jarvis (480x320)
+# Estrutura: pagina → robo (treme/respira) → cabeca (inclina) + extras
+# (ondas, notas, z, pontos, anéis). Coordenadas absolutas do ecrã em toda a
+# árvore; cada grupo é um obj transparente 480x320 em (0,0) com pad 0.
+# Só `obj`: no painel os `arc`/`line` do LVGL saíam cinzentos.
+# =========================================================================
 lvgl:
-  id: lv
-  color_depth: 16
-  # 25% (77 KB) fica em RAM interna quando cabe, que e mais rapida que a PSRAM.
   buffer_size: 25%
-  default_font: font_normal
-  log_level: WARN
-  widgets:
-    - obj:
-        id: pagina
-        width: 480
-        height: 320
-        x: 0
-        y: 0
-        pad_all: 0
-        border_width: 0
-        radius: 0
-        bg_color: 0x000000
-        scrollable: false
-        widgets:
-          - obj:
-              id: robo
-              x: 0
-              y: 0
-              width: 480
-              height: 320
-              pad_all: 0
-              border_width: 0
-              bg_opa: TRANSP
-              scrollable: false
-              widgets:
-                # antena (por tras do corpo)
-                - obj:
-                    id: antena
-                    x: 238
-                    y: 40
-                    width: 5
-                    height: 37
-                    radius: 2
-                    border_width: 0
-                    bg_color: 0x99AFBE
-                - obj:
-                    id: ponta
-                    x: 231
-                    y: 22
-                    width: 19
-                    height: 19
-                    radius: 9
-                    border_width: 0
-                    bg_color: 0xE1FCFF
-                # orelhas
-                - obj:
-                    id: orelha_e
-                    x: 104
-                    y: 178
-                    width: 16
-                    height: 47
-                    radius: 8
-                    border_width: 0
-                    bg_color: 0xCED8E6
-                - obj:
-                    id: orelha_d
-                    x: 361
-                    y: 178
-                    width: 16
-                    height: 47
-                    radius: 8
-                    border_width: 0
-                    bg_color: 0xCED8E6
-                # corpo + ecra
-                - obj:
-                    id: corpo
-                    x: 122
-                    y: 77
-                    width: 237
-                    height: 207
-                    # 77 e o raio medido (squircle, nao canto arredondado):
-                    # ajuste de circulo com erro <1 px em 13 pontos da aresta.
-                    radius: 77
-                    border_width: 0
-                    bg_color: 0xEAEFF5
-                    bg_grad_color: 0xC1CAD6
-                    bg_grad_dir: VER
-                - obj:
-                    id: ecra
-                    x: 150
-                    y: 122
-                    width: 181
-                    height: 131
-                    radius: 57
-                    border_width: 1
-                    border_color: 0x263444
-                    bg_color: 0x090E15
-                    widgets:
-                      # --- olhos redondos (espera, ouvir, pensar, falar, alarme)
-                      - obj:
-                          id: olho_e
-                          x: 29
-                          y: 37
-                          width: 47
-                          height: 55
-                          radius: 50%
-                          border_width: 0
-                          bg_color: 0x40E0FF
-                          widgets:
-                            - obj:
-                                id: reflexo_e
-                                x: 7
-                                y: 6
-                                width: 33
-                                height: 21
-                                radius: 10
-                                border_width: 0
-                                bg_color: 0xFFFFFF
-                      - obj:
-                          id: olho_d
-                          x: 105
-                          y: 37
-                          width: 47
-                          height: 55
-                          radius: 50%
-                          border_width: 0
-                          bg_color: 0x40E0FF
-                          widgets:
-                            - obj:
-                                id: reflexo_d
-                                x: 7
-                                y: 6
-                                width: 33
-                                height: 21
-                                radius: 10
-                                border_width: 0
-                                bg_color: 0xFFFFFF
-                      # --- olhos fechados (a dormir / a tocar)
-                      - obj:
-                          id: olho_fechado_e
-                          x: 29
-                          y: 61
-                          width: 47
-                          height: 7
-                          radius: 3
-                          border_width: 0
-                          bg_color: 0x40E0FF
-                          hidden: true
-                      - obj:
-                          id: olho_fechado_d
-                          x: 105
-                          y: 61
-                          width: 47
-                          height: 7
-                          radius: 3
-                          border_width: 0
-                          bg_color: 0x40E0FF
-                          hidden: true
-                      # --- olho em X (sem ligacao): 4 barras inclinadas
-                      - obj:
-                          id: x1
-                          x: 42
-                          y: 55
-                          width: 7
-                          height: 30
-                          radius: 2
-                          border_width: 0
-                          bg_color: 0xFF4D4D
-                          hidden: true
-                          transform_rotation: 45deg
-                      - obj:
-                          id: x2
-                          x: 42
-                          y: 55
-                          width: 7
-                          height: 30
-                          radius: 2
-                          border_width: 0
-                          bg_color: 0xFF4D4D
-                          hidden: true
-                          transform_rotation: 315deg
-                      - obj:
-                          id: x3
-                          x: 118
-                          y: 55
-                          width: 7
-                          height: 30
-                          radius: 2
-                          border_width: 0
-                          bg_color: 0xFF4D4D
-                          hidden: true
-                          transform_rotation: 45deg
-                      - obj:
-                          id: x4
-                          x: 118
-                          y: 55
-                          width: 7
-                          height: 30
-                          radius: 2
-                          border_width: 0
-                          bg_color: 0xFF4D4D
-                          hidden: true
-                          transform_rotation: 315deg
-                      # --- sobrancelhas (so no estado "a ouvir")
-                      - line:
-                          id: sobrancelha_e
-                          x: 32
-                          y: 19
-                          width: 37
-                          height: 9
-                          points:
-                            - 0, 9
-                            - 18, 0
-                            - 37, 9
-                          line_width: 4
-                          line_color: 0x40E0FF
-                          line_rounded: true
-                          hidden: true
-                      - line:
-                          id: sobrancelha_d
-                          x: 108
-                          y: 19
-                          width: 37
-                          height: 9
-                          points:
-                            - 0, 9
-                            - 18, 0
-                            - 37, 9
-                          line_width: 4
-                          line_color: 0x40E0FF
-                          line_rounded: true
-                          hidden: true
-                      # --- bocas
-                      # 29/10: era um `arc` e no painel saiu a CINZENTO (o
-                      # `arc_color` nao pega) e o alarme mostrava um quadro a
-                      # frente da cara (as 3 ondas em arco). Trocado por `line`,
-                      # que respeita a cor e nao desenha caixa nenhuma.
-                      - line:
-                          id: boca_sorriso
-                          x: 68
-                          y: 112
-                          width: 45
-                          height: 13
-                          points:
-                            - 0, 0
-                            - 22, 12
-                            - 45, 0
-                          line_width: 6
-                          line_color: 0x40E0FF
-                          line_rounded: true
-                      - obj:
-                          id: boca_circ
-                          x: 76
-                          y: 100
-                          width: 29
-                          height: 25
-                          radius: 50%
-                          border_width: 0
-                          bg_color: 0x40E0FF
-                          transform_width: 100%
-                          transform_height: 100%
-                          transform_pivot_y: 100%
-                          hidden: true
-                          widgets:
-                            - obj:
-                                id: boca_furo
-                                x: 11
-                                y: 12
-                                width: 7
-                                height: 11
-                                radius: 50%
-                                border_width: 0
-                                bg_color: 0x090E15
-                      - line:
-                          id: boca_triste
-                          x: 68
-                          y: 104
-                          width: 45
-                          height: 13
-                          points:
-                            - 0, 12
-                            - 22, 0
-                            - 45, 12
-                          line_width: 5
-                          line_color: 0xFF4D4D
-                          line_rounded: true
-                          hidden: true
-          # --- ondas sonoras (ouvir / alarme)
-          - line:
-              id: onda1
-              x: 418
-              y: 181
-              width: 10
-              height: 16
-              points:
-                - 0, 0
-                - 9, 8
-                - 0, 16
-              line_width: 3
-              line_color: 0x40E0FF
-              line_rounded: true
-              hidden: true
-          - line:
-              id: onda2
-              x: 412
-              y: 173
-              width: 12
-              height: 32
-              points:
-                - 0, 0
-                - 11, 16
-                - 0, 32
-              line_width: 3
-              line_color: 0x40E0FF
-              line_rounded: true
-              hidden: true
-          - line:
-              id: onda3
-              x: 406
-              y: 165
-              width: 14
-              height: 48
-              points:
-                - 0, 0
-                - 13, 24
-                - 0, 48
-              line_width: 3
-              line_color: 0x40E0FF
-              line_rounded: true
-              hidden: true
-          # --- pontos de pensamento
-          - obj:
-              id: ponto1
-              x: 382
-              y: 116
-              width: 16
-              height: 16
-              radius: 50%
-              border_width: 0
-              bg_color: 0x40E0FF
-              hidden: true
-          - obj:
-              id: ponto2
-              x: 408
-              y: 98
-              width: 14
-              height: 14
-              radius: 50%
-              border_width: 0
-              bg_color: 0x40E0FF
-              hidden: true
-          - obj:
-              id: ponto3
-              x: 430
-              y: 82
-              width: 12
-              height: 12
-              radius: 50%
-              border_width: 0
-              bg_color: 0x40E0FF
-              hidden: true
-          # --- texto
-          - label:
-              id: relogio_big
-              x: 16
-              y: 4
-              text: "00:00"
-              text_font: font_med
-              text_color: 0xFFFFFF
-          - label:
-              id: relogio_small
-              x: 15
-              y: 13
-              text: "00:00"
-              text_font: font_small
-              text_color: 0x96A8BE
-              hidden: true
-          - label:
-              id: legenda
-              x: 0
-              y: 293
-              width: 480
-              text: ""
-              text_font: font_small
-              text_color: 0x96A8BE
-              text_align: CENTER
-          - label:
-              id: temporizador
-              x: 0
-              y: 10
-              width: 466
-              text: ""
-              text_font: font_small
-              text_color: 0xFF4D4D
-              text_align: RIGHT
+  pages:
+    - id: pagina
+      x: 0
+      y: 0
+      width: 100%
+      height: 100%
+      pad_all: 0
+      border_width: 0
+      bg_color: 0x05080C
+      scroll_dir: NONE
+      scrollbar_mode: "OFF"
+      widgets:
+        - obj:
+            id: robo
+            x: 0
+            y: 0
+            width: 480
+            height: 320
+            pad_all: 0
+            border_width: 0
+            bg_opa: TRANSP
+            scroll_dir: NONE
+            scrollbar_mode: "OFF"
+            widgets:
+              - obj:
+                  id: tronco
+                  x: 110
+                  y: 290
+                  width: 260
+                  height: 92
+                  radius: 52
+                  border_width: 0
+                  bg_color: 0xE9EFF7
+                  bg_grad_color: 0xBCC7D6
+                  bg_grad_dir: VER
+              - obj:
+                  id: pescoco
+                  x: 222
+                  y: 268
+                  width: 36
+                  height: 34
+                  radius: 10
+                  border_width: 0
+                  bg_color: 0xD6DEEA
+              - obj:
+                  id: cabeca
+                  x: 0
+                  y: 0
+                  width: 480
+                  height: 320
+                  pad_all: 0
+                  border_width: 0
+                  bg_opa: TRANSP
+                  scroll_dir: NONE
+                  scrollbar_mode: "OFF"
+                  transform_width: 100%
+                  transform_height: 100%
+                  transform_pivot_x: 50%
+                  transform_pivot_y: 50%
+                  widgets:
+                    - obj:
+                        id: antena
+                        x: 237
+                        y: 40
+                        width: 7
+                        height: 42
+                        radius: 3
+                        border_width: 0
+                        bg_color: 0xB5C0CE
+                    - obj:
+                        id: led_antena
+                        x: 231
+                        y: 22
+                        width: 18
+                        height: 18
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0xE1FCFF
+                    - obj:
+                        id: orelha_e
+                        x: 104
+                        y: 178
+                        width: 22
+                        height: 46
+                        radius: 11
+                        border_width: 0
+                        bg_color: 0xCED8E6
+                    - obj:
+                        id: orelha_d
+                        x: 354
+                        y: 178
+                        width: 22
+                        height: 46
+                        radius: 11
+                        border_width: 0
+                        bg_color: 0xCED8E6
+                    - obj:
+                        id: casca
+                        x: 120
+                        y: 75
+                        width: 240
+                        height: 210
+                        radius: 80
+                        border_width: 1
+                        border_color: 0xFFFFFF
+                        bg_color: 0xF6FAFF
+                        bg_grad_color: 0xC6D2E2
+                        bg_grad_dir: VER
+                    - obj:
+                        id: viseira
+                        x: 150
+                        y: 122
+                        width: 180
+                        height: 130
+                        radius: 56
+                        border_width: 1
+                        border_color: 0x263444
+                        bg_color: 0x090E15
+                    - obj:
+                        id: led_orelha_e
+                        x: 110
+                        y: 196
+                        width: 10
+                        height: 10
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x5A6E82
+                    - obj:
+                        id: led_orelha_d
+                        x: 365
+                        y: 196
+                        width: 10
+                        height: 10
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x5A6E82
+                    - obj:
+                        id: olho_e
+                        x: 179
+                        y: 159
+                        width: 46
+                        height: 54
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                    - obj:
+                        id: brilho_e
+                        x: 190
+                        y: 167
+                        width: 22
+                        height: 14
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0xF2FEFF
+                    - obj:
+                        id: olho_d
+                        x: 255
+                        y: 159
+                        width: 46
+                        height: 54
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                    - obj:
+                        id: brilho_d
+                        x: 266
+                        y: 167
+                        width: 22
+                        height: 14
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0xF2FEFF
+                    - obj:
+                        id: olho_fechado_e
+                        x: 179
+                        y: 183
+                        width: 46
+                        height: 9
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                        hidden: true
+                    - obj:
+                        id: olho_fechado_d
+                        x: 255
+                        y: 183
+                        width: 46
+                        height: 9
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                        hidden: true
+                    - obj:
+                        id: x_0_0
+                        x: 181
+                        y: 182
+                        width: 42
+                        height: 8
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0xFF6060
+                        hidden: true
+                        transform_rotation: 45
+                    - obj:
+                        id: x_0_1
+                        x: 181
+                        y: 182
+                        width: 42
+                        height: 8
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0xFF6060
+                        hidden: true
+                        transform_rotation: 135
+                    - obj:
+                        id: x_1_0
+                        x: 257
+                        y: 182
+                        width: 42
+                        height: 8
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0xFF6060
+                        hidden: true
+                        transform_rotation: 45
+                    - obj:
+                        id: x_1_1
+                        x: 257
+                        y: 182
+                        width: 42
+                        height: 8
+                        radius: 4
+                        border_width: 0
+                        bg_color: 0xFF6060
+                        hidden: true
+                        transform_rotation: 135
+                    - obj:
+                        id: sobrancelha_e
+                        x: 183
+                        y: 141
+                        width: 38
+                        height: 18
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                        hidden: true
+                    - obj:
+                        id: sobrancelha_corte_e
+                        x: 183
+                        y: 148
+                        width: 38
+                        height: 18
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x090E15
+                        hidden: true
+                    - obj:
+                        id: sobrancelha_d
+                        x: 259
+                        y: 141
+                        width: 38
+                        height: 18
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                        hidden: true
+                    - obj:
+                        id: sobrancelha_corte_d
+                        x: 259
+                        y: 148
+                        width: 38
+                        height: 18
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x090E15
+                        hidden: true
+                    - obj:
+                        id: boca_sorriso
+                        x: 220
+                        y: 219
+                        width: 40
+                        height: 26
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                    - obj:
+                        id: boca_corte
+                        x: 220
+                        y: 210
+                        width: 40
+                        height: 26
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x090E15
+                    - obj:
+                        id: boca_aberta
+                        x: 227
+                        y: 220
+                        width: 26
+                        height: 24
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                        hidden: true
+                    - obj:
+                        id: boca_aberta_furo
+                        x: 234
+                        y: 227
+                        width: 12
+                        height: 11
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x090E15
+                        hidden: true
+                    - obj:
+                        id: boca_triste
+                        x: 220
+                        y: 226
+                        width: 40
+                        height: 26
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0xFF6060
+                        hidden: true
+                    - obj:
+                        id: boca_triste_corte
+                        x: 220
+                        y: 235
+                        width: 40
+                        height: 26
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x090E15
+                        hidden: true
+              - obj:
+                  id: onda1
+                  x: 400
+                  y: 170
+                  width: 40
+                  height: 40
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: onda1_corte
+                  x: 406
+                  y: 170
+                  width: 40
+                  height: 40
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x05080C
+                  hidden: true
+              - obj:
+                  id: onda2
+                  x: 386
+                  y: 156
+                  width: 68
+                  height: 68
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: onda2_corte
+                  x: 392
+                  y: 156
+                  width: 68
+                  height: 68
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x05080C
+                  hidden: true
+              - obj:
+                  id: onda3
+                  x: 372
+                  y: 142
+                  width: 96
+                  height: 96
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: onda3_corte
+                  x: 378
+                  y: 142
+                  width: 96
+                  height: 96
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x05080C
+                  hidden: true
+              - obj:
+                  id: ponto1
+                  x: 390
+                  y: 124
+                  width: 16
+                  height: 16
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: ponto2
+                  x: 415
+                  y: 105
+                  width: 14
+                  height: 14
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: ponto3
+                  x: 436
+                  y: 88
+                  width: 12
+                  height: 12
+                  radius: 50
+                  border_width: 0
+                  bg_color: 0x40E0FF
+                  hidden: true
+              - obj:
+                  id: anel1
+                  x: 226
+                  y: 17
+                  width: 28
+                  height: 28
+                  radius: 50
+                  border_width: 3
+                  border_color: 0x40E0FF
+                  bg_color: 0x40E0FF
+                  hidden: true
+                  bg_opa: TRANSP
+                  transform_width: 100%
+                  transform_height: 100%
+              - obj:
+                  id: anel2
+                  x: 212
+                  y: 3
+                  width: 56
+                  height: 56
+                  radius: 50
+                  border_width: 3
+                  border_color: 0x40E0FF
+                  bg_color: 0x40E0FF
+                  hidden: true
+                  bg_opa: TRANSP
+                  transform_width: 100%
+                  transform_height: 100%
+              - obj:
+                  id: anel3
+                  x: 196
+                  y: -13
+                  width: 88
+                  height: 88
+                  radius: 50
+                  border_width: 3
+                  border_color: 0x40E0FF
+                  bg_color: 0x40E0FF
+                  hidden: true
+                  bg_opa: TRANSP
+                  transform_width: 100%
+                  transform_height: 100%
+              - obj:
+                  id: nota1
+                  x: 396
+                  y: 150
+                  width: 22
+                  height: 40
+                  pad_all: 0
+                  border_width: 0
+                  bg_opa: TRANSP
+                  scroll_dir: NONE
+                  scrollbar_mode: "OFF"
+                  hidden: true
+                  widgets:
+                    - obj:
+                        id: nota1_cabeca
+                        x: 0
+                        y: 28
+                        width: 12
+                        height: 10
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                    - obj:
+                        id: nota1_haste
+                        x: 10
+                        y: 0
+                        width: 3
+                        height: 32
+                        radius: 2
+                        border_width: 0
+                        bg_color: 0x40E0FF
+              - obj:
+                  id: nota2
+                  x: 430
+                  y: 128
+                  width: 22
+                  height: 40
+                  pad_all: 0
+                  border_width: 0
+                  bg_opa: TRANSP
+                  scroll_dir: NONE
+                  scrollbar_mode: "OFF"
+                  hidden: true
+                  widgets:
+                    - obj:
+                        id: nota2_cabeca
+                        x: 0
+                        y: 28
+                        width: 12
+                        height: 10
+                        radius: 50
+                        border_width: 0
+                        bg_color: 0x40E0FF
+                    - obj:
+                        id: nota2_haste
+                        x: 10
+                        y: 0
+                        width: 3
+                        height: 32
+                        radius: 2
+                        border_width: 0
+                        bg_color: 0x40E0FF
+              - label:
+                  id: z1
+                  x: 390
+                  y: 108
+                  text: "Z"
+                  text_font: font_normal
+                  text_color: 0x40E0FF
+                  hidden: true
+              - label:
+                  id: z2
+                  x: 414
+                  y: 92
+                  text: "Z"
+                  text_font: font_small
+                  text_color: 0x40E0FF
+                  hidden: true
+              - label:
+                  id: z3
+                  x: 434
+                  y: 80
+                  text: "Z"
+                  text_font: font_small
+                  text_color: 0x40E0FF
+                  hidden: true
+        - obj:
+            id: excl_esq_barra
+            x: 70
+            y: 120
+            width: 6
+            height: 26
+            radius: 3
+            border_width: 0
+            bg_color: 0xFF6060
+            hidden: true
+        - obj:
+            id: excl_esq_ponto
+            x: 70
+            y: 152
+            width: 6
+            height: 6
+            radius: 50
+            border_width: 0
+            bg_color: 0xFF6060
+            hidden: true
+        - obj:
+            id: excl_dir_barra
+            x: 398
+            y: 120
+            width: 6
+            height: 26
+            radius: 3
+            border_width: 0
+            bg_color: 0xFF6060
+            hidden: true
+        - obj:
+            id: excl_dir_ponto
+            x: 398
+            y: 152
+            width: 6
+            height: 6
+            radius: 50
+            border_width: 0
+            bg_color: 0xFF6060
+            hidden: true
+        - label:
+            id: relogio_big
+            x: 14
+            y: 4
+            text: "00:00"
+            text_font: font_med
+            text_color: 0xFFFFFF
+        - label:
+            id: relogio_small
+            x: 14
+            y: 4
+            text: "00:00"
+            text_font: font_small
+            text_color: 0x96A8BE
+            hidden: true
+        - label:
+            id: temporizador
+            x: 396
+            y: 12
+            width: 72
+            text: ""
+            text_align: RIGHT
+            text_font: font_small
+            text_color: 0xFF6060
+        - label:
+            id: legenda
+            x: 150
+            y: 298
+            width: 180
+            text: ""
+            text_align: CENTER
+            long_mode: SCROLL_CIRCULAR
+            text_font: font_small
+            text_color: 0x2F3947
+  # ---------------------------------------------------------------------
+  # Animações. `loop` repete; o "vai-e-vem" de duas metades faz-se com duas
+  # animações e `on_stop` a arrancar a contrária — MAS quando o vai-e-vem é
+  # simétrico há melhor: `timing: round_trip` (o ESPHome TEM round_trip), que
+  # dentro da MESMA animação vai de `from` a `to` e volta; como acaba no valor
+  # inicial, o `loop` não dá salto nenhum.
+  # Só x/y/opa/transform_* são animáveis: largura e altura NÃO.
+  # ---------------------------------------------------------------------
   animations:
-    # respiracao: sobe 3 px e volta (4 s)
-    - id: respirar
-      duration: 4s
-      auto_start: true
+    # (a respiracao do mockup saiu: animar o grupo de ecra inteiro obrigava o
+    # LVGL a redesenhar 480x320 a 60 fps, saturava o SPI a 40 MHz e a voz
+    # ficava lenta e com falhas — medido no painel a 29/10)
+    # v0.17.9 — alarme: era `loop` de -5 a 5 em 90 ms, ~11 saltos por segundo,
+    # mais depressa do que o painel desenha (tremia, não abanava). Agora é um
+    # vaivém contínuo de 380 ms com ease_in_out.
+    - id: tremer
+      duration: 900ms
       loop: true
-      timing: ease_in_out
-      widgets:
-        - id: robo
-          y:
-            from: 0
-            to: -3
-    # ponta da antena a pulsar
-    - id: pulso_antena
-      duration: 2500ms
-      auto_start: true
-      loop: true
-      timing: round_trip
-      widgets:
-        - id: ponta
-          bg_opa:
-            from: 100%
-            to: 30%
-    # boca a falar (arranca no estado A FALAR)
-    - id: falar
-      duration: 260ms
-      loop: true
-      timing: round_trip
-      widgets:
-        # `height` nao e animavel no LVGL do ESPHome (so min/max_height e as
-        # transform_*): a boca abre e fecha por transform_height, com o pivo em
-        # baixo para crescer para cima. Medido a 29/10 com o `esphome config`.
-        - id: boca_circ
-          transform_height:
-            from: 55%
-            to: 100%
-    # alarme: tremer a esquerda/direita
-    - id: tremer_alarme
-      duration: 160ms
-      loop: true
-      timing: round_trip
+      timing:
+        - type: round_trip
+          pause: 0.08
+        - type: ease_in_out
       widgets:
         - id: robo
           x:
-            from: -6
-            to: 6
-    # ondas a pulsar enquanto ouve
-    - id: pulsar_ondas
-      duration: 900ms
+            from: -4
+            to: 4
+    - id: inclina_a
+      duration: 1200ms
+      on_stop:
+        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
+        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: inclina_b
+      widgets:
+        - id: cabeca
+          transform_rotation:
+            from: 0
+            to: 5
+    - id: inclina_b
+      duration: 1200ms
+      on_stop:
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: inclina_a
+      widgets:
+        - id: cabeca
+          transform_rotation:
+            from: 5
+            to: 0
+    - id: balanca_a
+      duration: 1400ms
+      on_stop:
+        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
+        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: balanca_b
+      widgets:
+        - id: cabeca
+          transform_rotation:
+            from: 0
+            to: 3
+    - id: balanca_b
+      duration: 1400ms
+      on_stop:
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: balanca_a
+      widgets:
+        - id: cabeca
+          transform_rotation:
+            from: 3
+            to: 0
+    - id: boca_a
+      duration: 90ms
+      on_stop:
+        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
+        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: boca_b
+      widgets:
+        - id: boca_aberta
+          y:
+            from: 220
+            to: 213
+    - id: boca_b
+      duration: 90ms
+      on_stop:
+        - if:
+            condition:
+              lambda: "return id(anim_ok);"
+            then:
+              - lvgl.animation.start: boca_a
+      widgets:
+        - id: boca_aberta
+          y:
+            from: 213
+            to: 220
+    - id: onda_a
+      duration: 700ms
       loop: true
-      timing: round_trip
+      timing:
+        - type: round_trip
       widgets:
         - id: onda1
-          bg_opa:
+          opa:
             from: 100%
             to: 25%
         - id: onda2
-          bg_opa:
-            from: 60%
-            to: 15%
+          opa:
+            from: 100%
+            to: 25%
         - id: onda3
-          bg_opa:
-            from: 35%
-            to: 5%
+          opa:
+            from: 100%
+            to: 25%
+    - id: ponto1_anima
+      duration: 900ms
+      loop: true
+      timing:
+        - type: round_trip
+      widgets:
+        - id: ponto1
+          opa:
+            from: 100%
+            to: 30%
+    - id: ponto2_anima
+      duration: 900ms
+      start_delay: 200ms
+      loop: true
+      timing:
+        - type: round_trip
+      widgets:
+        - id: ponto2
+          opa:
+            from: 100%
+            to: 30%
+    - id: ponto3_anima
+      duration: 900ms
+      start_delay: 400ms
+      loop: true
+      timing:
+        - type: round_trip
+      widgets:
+        - id: ponto3
+          opa:
+            from: 100%
+            to: 30%
+    - id: nota_a
+      duration: 2200ms
+      loop: true
+      widgets:
+        - id: nota1
+          y:
+            from: 150
+            to: 88
+          opa:
+            from: 100%
+            to: 10%
+    - id: nota_b
+      duration: 2200ms
+      start_delay: 1100ms
+      loop: true
+      widgets:
+        - id: nota2
+          y:
+            from: 128
+            to: 70
+          opa:
+            from: 100%
+            to: 10%
+    - id: z_a
+      duration: 2400ms
+      loop: true
+      widgets:
+        - id: z1
+          y:
+            from: 108
+            to: 56
+          opa:
+            from: 100%
+            to: 10%
+    - id: z_b
+      duration: 2400ms
+      start_delay: 800ms
+      loop: true
+      widgets:
+        - id: z2
+          y:
+            from: 92
+            to: 44
+          opa:
+            from: 100%
+            to: 10%
+    - id: z_c
+      duration: 2400ms
+      start_delay: 1600ms
+      loop: true
+      widgets:
+        - id: z3
+          y:
+            from: 80
+            to: 36
+          opa:
+            from: 100%
+            to: 10%
+    - id: anel_1
+      duration: 900ms
+      loop: true
+      widgets:
+        - id: anel1
+          transform_width:
+            from: 40%
+            to: 100%
+          transform_height:
+            from: 40%
+            to: 100%
+          opa:
+            from: 100%
+            to: 0%
+    - id: anel_2
+      duration: 900ms
+      start_delay: 300ms
+      loop: true
+      widgets:
+        - id: anel2
+          transform_width:
+            from: 40%
+            to: 100%
+          transform_height:
+            from: 40%
+            to: 100%
+          opa:
+            from: 100%
+            to: 0%
+    - id: anel_3
+      duration: 900ms
+      start_delay: 600ms
+      loop: true
+      widgets:
+        - id: anel3
+          transform_width:
+            from: 40%
+            to: 100%
+          transform_height:
+            from: 40%
+            to: 100%
+          opa:
+            from: 100%
+            to: 0%
+    - id: olhos_saltam
+      duration: 600ms
+      loop: true
+      timing:
+        - type: round_trip
+          pause: 0.05
+      widgets:
+        - id: olho_e
+          x:
+            from: 179
+            to: 185
+        - id: olho_d
+          x:
+            from: 255
+            to: 261
+    - id: led_pulsa
+      duration: 700ms
+      loop: true
+      timing:
+        - type: round_trip
+      widgets:
+        - id: led_antena
+          opa:
+            from: 100%
+            to: 25%
 
 # NOTA (12/09/2026): esta revisão da placa NÃO tem touchscreen — o GT911 não
 # existe/ não responde e a config oficial do fabricante também não o define.
@@ -2302,7 +2765,7 @@ font:
   - file: "gfonts://Roboto"
     id: font_normal
     size: 24
-    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
+    glyphs: " %°·–&'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
   # Numero grande: o % do volume (ecra de media) e as HORAS no centro do anel
   # quando esta em espera (o ":" entrou em 26/09 por causa disso).
   - file: "gfonts://Roboto"
@@ -2312,7 +2775,7 @@ font:
   - file: "gfonts://Roboto"
     id: font_small
     size: 16
-    glyphs: " %°0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
+    glyphs: " %°·–&'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
 
 # --- SENSORES DE ESTADO ------------------------------------------------------
 debug:

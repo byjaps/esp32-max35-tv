@@ -36,14 +36,14 @@ resulting `.esphome/build/<name>/build/firmware.ota.bin` to the **ESPHome**
 add-on/Web dashboard — same result, no local toolchain on the machine driving the
 board.
 
-> ✅ **ESPHome 2026.9.1 is the current, supported build** — the board runs it
+> ✅ **ESPHome 2026.10.0 is the current, supported build** — the board runs it
 > stable (see `troubleshooting.md`). Validate first: `esphome config`.
 
 ## 3. Home Assistant side
 
 The board speaks to HA as an **Assist satellite**. On the HA side you need:
 
-1. The **[`rusty4444/hermes-voice-ha-integration`](hermes/README.md)** component
+1. The **[`rusty4444/hermes-voice-ha-integration`](../hermes/README.md)** component
    (via HACS) + the Hermes `home_assistant` and `voice_stack` plugins running on
    Hermes, so Hermes registers as a **Conversation Agent** in HA.
 2. An **Assist pipeline** whose conversation agent is **Hermes**.
