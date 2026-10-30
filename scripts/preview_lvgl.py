@@ -1,10 +1,10 @@
-"""Desenha a cara com as MESMAS coordenadas do gerador (../geradores/gera_face.py) em PIL.
+"""Draws the face with the SAME coordinates as the generator (../geradores/gera_face.py) in PIL.
 
-Serve de prova visual antes de cada OTA: se o preview estiver certo e o painel não,
-o problema é do LVGL (cor/empilhamento), não da geometria.
+Serves as visual proof before every OTA: if the preview is right and the panel is not,
+the problem is in LVGL (colour/stacking), not in the geometry.
 
-Uso: python3 preview_lvgl.py [pasta_saida]
-Gera <estado>.png (480x320) + folha.png com os 8 estados.
+Usage: python3 preview_lvgl.py [output_dir]
+Writes <state>.png (480x320) + folha.png with the 8 states.
 """
 import importlib.util
 import os
@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 GERADOR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "geradores", "gera_face.py")
 spec = importlib.util.spec_from_file_location("gf", GERADOR)
 gf = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(gf)          # escreve o bloco lvgl (efeito colateral inofensivo)
+spec.loader.exec_module(gf)          # writes the lvgl block (harmless side effect)
 M = gf.M
 SAIDA = sys.argv[1] if len(sys.argv) > 1 else "preview"
 os.makedirs(SAIDA, exist_ok=True)
@@ -39,7 +39,7 @@ TRONCO1, TRONCO2 = esc("E9EFF7"), esc("BCC7D6")
 def rr(d, r, cor, raio=None):
     x, y, w, h = r[:4]
     rad = raio if raio is not None else (r[4] if len(r) > 4 else h // 2)
-    if rad >= 50:      # 50 = circulo/elipse em percentagem
+    if rad >= 50:      # 50 = circle/ellipse in percent
         d.ellipse([x, y, x + w - 1, y + h - 1], fill=cor)
     else:
         d.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=rad, fill=cor)
@@ -62,7 +62,7 @@ def frame(estado):
     im = Image.new("RGB", (W, H), FUNDO)
     d = ImageDraw.Draw(im)
 
-    # corpo
+    # body
     rr(d, M["pescoco"], esc("D6DEEA"))
     faixa, masc = grad(d, M["tronco"], TRONCO1, TRONCO2, M["tronco"][4])
     im.paste(faixa, (M["tronco"][0], M["tronco"][1]), masc)
@@ -92,13 +92,13 @@ def frame(estado):
             rr(d, (ox, 159, 46, 54, 50), CIANO)
             rr(d, (ox + 11, 167, 22, 14, 50), (242, 254, 255))
 
-    # sobrancelhas (a ouvir)
+    # eyebrows (listening)
     if estado == "ouvir":
         for sx in (183, 259):
             rr(d, (sx, 141, 38, 18, 50), CIANO)
             rr(d, (sx, 148, 38, 18, 50), VISEIRA)
 
-    # boca
+    # mouth
     if alarme or estado == "falar":
         rr(d, (227, 220, 26, 24, 50), CIANO)
         rr(d, (234, 227, 12, 11, 50), VISEIRA)
@@ -109,7 +109,7 @@ def frame(estado):
         rr(d, (220, 219, 40, 26, 50), CIANO)
         rr(d, (220, 210, 40, 26, 50), VISEIRA)
 
-    # ondas
+    # waves
     if estado == "ouvir" or alarme:
         for r in (20, 34, 48):
             rr(d, (420 - r, 190 - r, 2 * r, 2 * r, 50), CIANO)
@@ -149,4 +149,4 @@ for i, (est, leg, grande) in enumerate(ESTADOS):
     im.save(f"{SAIDA}/{est}.png")
     folha.paste(im, ((i % 2) * W, (i // 2) * H))
 folha.save(f"{SAIDA}/folha.png")
-print("preview escrito em", SAIDA)
+print("preview written to", SAIDA)

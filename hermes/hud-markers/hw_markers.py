@@ -1,19 +1,19 @@
-"""Marcadores [HW:...] na resposta do agente -> acções em dispositivos.
+"""[HW:...] markers in the agent reply -> actions on devices.
 
-Convenção (padrão lampOS, adaptada): o agente escreve, tipicamente no início da
-resposta,
+Convention (lampOS pattern, adapted): the agent writes, typically at the start of the
+reply,
 
     [HW:/display/info:{"text":"14:30"}]
     [HW:/light:{"brightness_pct":40}]
     [HW:/volume:{"value":30}]
 
-O marcador NÃO é falado: é extraído, traduzido para um serviço do HA e removido
-do texto antes de chegar ao TTS. Custa zero voltas de inferência.
+The marker is NOT spoken: it is extracted, translated into an HA service and removed
+from the text before it reaches the TTS. It costs zero inference turns.
 
-Regra do ensaio de 23/10/2026: **limpar primeiro, executar só o que faz parse.**
-O regex estrito do upstream não apanha JSON com objeto aninhado; um marcador não
-apanhado era falado em voz alta. Aqui o texto é limpo com o regex largo e só os
-marcadores que passam `json.loads` são executados.
+Rule from the 23/10/2026 trial: **clean first, run only what parses.**
+The upstream strict regex does not catch JSON with a nested object; a marker that was
+not caught ended up spoken aloud. Here the text is cleaned with the loose regex and
+only the markers that pass `json.loads` are executed.
 """
 from __future__ import annotations
 
@@ -25,32 +25,32 @@ from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
 
-# Forma canónica: [HW:/rota/sub:{"json"}] — corpo opcional.
+# Canonical form: [HW:/route/sub:{"json"}] — body optional.
 _HW_STRICT = re.compile(r"\[HW:((?:/[^{:\]]+(?::[^{:\]]+)*))(?::(\{[^}]*\}))?\]")
-# Variante link markdown: [Luzes off!](HW:/led/off:{}) -> marcador + label.
+# Markdown link variant: [Lights off!](HW:/led/off:{}) -> marker + label.
 _HW_LINK = re.compile(
     r"\[([^\]]*)\]\(\s*HW:\s*((?:/[^(){:\s]+(?::[^(){:\s]+)*))(?::(\{[^}]*\}))?:?\s*\)",
     re.I,
 )
-# Rede de limpeza: apaga QUALQUER coisa com forma de marcador, mesmo inválida.
+# Cleanup net: deletes ANYTHING shaped like a marker, even if invalid.
 _HW_LOOSE = re.compile(r"\[HW:[^\]]*\]")
 
 # ---------------------------------------------------------------------------
-# Limites ABAIXO do agente (princípio «a segurança não se pede ao modelo»).
-# O prompt já diz ao agente estes números (PANEL_RULE); isto é a última linha de
-# defesa, para o caso de ele se esquecer ou de um pedido vir de outro sítio.
-# Mudar aqui e na PANEL_RULE — os dois valores têm de contar a mesma história.
+# Limits BELOW the agent (principle «safety is not asked of the model»).
+# The prompt already tells the agent these numbers (PANEL_RULE); this is the last
+# line of defence, in case it forgets or a request comes from somewhere else.
+# Change here and in PANEL_RULE — both values must tell the same story.
 # ---------------------------------------------------------------------------
-# Pisos de usabilidade MEDIDOS no painel real (24/10/2026, 00:45):
-# «o volume mínimo para falar é 60 e o brilho 35; menos que isto fica muito baixo e
-# muito escuro». Abaixo disto o painel é inútil, por isso o piso é garantido sempre —
-# de dia e de noite. Estes números não são gosto pessoal: foram ouvidos e vistos.
-QUIET_START, QUIET_END = 23, 8          # horas locais do HA
-LIGHT_MIN, LIGHT_QUIET_MAX = 35, 70     # % de brilho: piso 35, teto nocturno 70
-VOLUME_MIN, VOLUME_QUIET_MAX = 60, 70   # % de volume: piso 60 (senão não se ouve)
-DAY_VOLUME_MAX = 90                     # teto de dia (a coluna é pequena)
+# Usability floors MEASURED on the real panel (24/10/2026, 00:45):
+# «the minimum volume to speak is 60 and the brightness 35; below that it is too low
+# and too dark». Below this the panel is useless, so the floor is always guaranteed —
+# by day and by night. These numbers are not personal taste: they were heard and seen.
+QUIET_START, QUIET_END = 23, 8          # local hours of the HA instance
+LIGHT_MIN, LIGHT_QUIET_MAX = 35, 70     # % brightness: floor 35, night ceiling 70
+VOLUME_MIN, VOLUME_QUIET_MAX = 60, 70   # % volume: floor 60 (otherwise inaudible)
+DAY_VOLUME_MAX = 90                     # daytime ceiling (the column is small)
 
-# (rota, campo) -> (mínimo, máximo de dia, máximo à noite)
+# (route, field) -> (minimum, daytime maximum, night maximum)
 LIMITES: dict[tuple[str, str], tuple[float, float, float]] = {
     ("/light", "brightness_pct"): (LIGHT_MIN, 100, LIGHT_QUIET_MAX),
     ("/volume", "value"): (VOLUME_MIN, DAY_VOLUME_MAX, VOLUME_QUIET_MAX),
@@ -65,7 +65,7 @@ def _em_quiet_hours(agora: datetime) -> bool:
 def _limitar(
     rota: str, params: dict[str, Any], agora: datetime | None = None
 ) -> tuple[dict[str, Any], list[str]]:
-    """Corta o que passa dos limites. Devolve (params, cortes). Função pura."""
+    """Clamps whatever goes over the limits. Returns (params, cuts). Pure function."""
     agora = agora or datetime.now()
     quiet = _em_quiet_hours(agora)
     cortes: list[str] = []
@@ -76,24 +76,24 @@ def _limitar(
         try:
             valor = float(dados[campo])
         except (TypeError, ValueError):
-            cortes.append(f"{campo} inválido ({dados[campo]!r}) — descartado")
+            cortes.append(f"{campo} invalid ({dados[campo]!r}) — dropped")
             dados.pop(campo)
             continue
         teto = max_noite if quiet else max_dia
         if valor > teto:
             dados[campo] = int(teto) if float(teto).is_integer() else teto
-            cortes.append(f"{campo} {valor:g}->{teto:g} ({'noite' if quiet else 'dia'})")
+            cortes.append(f"{campo} {valor:g}->{teto:g} ({'night' if quiet else 'day'})")
         elif valor < minimo:
             dados[campo] = minimo
-            cortes.append(f"{campo} {valor:g}->{minimo:g} (mínimo)")
+            cortes.append(f"{campo} {valor:g}->{minimo:g} (minimum)")
     return dados, cortes
 
 
-# Texto de recurso quando a resposta era SÓ marcadores (senão o TTS fica mudo).
+# Fallback text when the reply was ONLY markers (otherwise the TTS goes silent).
 SPEECH_FALLBACK = "Feito."
 
-# Rotas suportadas. O entidade tem de existir no HA; se não existir, o marcador
-# é descartado com um aviso — nunca se inventa um destino.
+# Supported routes. The entity must exist in HA; if it does not, the marker is
+# dropped with a warning — a destination is never invented.
 ROTAS: dict[str, tuple[str, str]] = {
     "/display/info": ("text.mini_tv_linha_hud", "texto"),
     "/light": ("light.mini_tv_assistente_22a058_ecra", "luz"),
@@ -115,7 +115,7 @@ def _normalizar_links(texto: str) -> str:
 
 
 def extract_hw_markers(texto: str) -> tuple[list[tuple[str, dict[str, Any]]], str]:
-    """Devolve (chamadas válidas, texto limpo de marcadores)."""
+    """Returns (valid calls, text with the markers stripped)."""
     if not texto or "[HW:" not in texto and "](HW:" not in texto:
         return [], texto
 
@@ -126,8 +126,8 @@ def extract_hw_markers(texto: str) -> tuple[list[tuple[str, dict[str, Any]]], st
         corpo = m.group(2) or "{}"
         try:
             params = json.loads(corpo)
-        except Exception:  # noqa: BLE001 - marcador inválido: apaga-se, não se executa
-            _LOGGER.warning("HW marcador com JSON inválido em %s: %r", rota, corpo[:120])
+        except Exception:  # noqa: BLE001 - invalid marker: delete it, do not run it
+            _LOGGER.warning("HW marker with invalid JSON at %s: %r", rota, corpo[:120])
             continue
         if not isinstance(params, dict):
             continue
@@ -143,11 +143,11 @@ _rotas_verificadas = False
 
 
 def validar_rotas(hass) -> list[str]:
-    """Confirma que as entidades de ROTAS existem. Uma vez por processo.
+    """Confirms that the ROTAS entities exist. Once per process.
 
-    Sem isto, um firmware novo que renomeie uma entidade deixa o marcador a morrer
-    em silêncio (aconteceu a 23/10 com `text.mini_tv_linha_hud`). Não corrige nada:
-    diz o que falta, para se corrigir a tabela.
+    Without this, a new firmware that renames an entity leaves the marker dying
+    silently (it happened on 23/10 with `text.mini_tv_linha_hud`). It fixes nothing:
+    it reports what is missing, so that the table can be fixed.
     """
     global _rotas_verificadas
     faltam: list[str] = []
@@ -158,35 +158,35 @@ def validar_rotas(hass) -> list[str]:
         if hass.states.get(entidade) is None:
             faltam.append(entidade)
             _LOGGER.warning(
-                "HW rotas: a entidade %s (%s) não existe — os marcadores dessa rota "
-                "são descartados até a tabela ROTAS ser corrigida",
+                "HW routes: entity %s (%s) does not exist — markers for that route "
+                "are dropped until the ROTAS table is fixed",
                 entidade,
                 rota,
             )
     if not faltam:
-        _LOGGER.debug("HW rotas: %d rotas verificadas, todas presentes", len(ROTAS))
+        _LOGGER.debug("HW routes: %d routes checked, all present", len(ROTAS))
     return faltam
 
 
 async def fire_hw_calls(hass, chamadas: list[tuple[str, dict[str, Any]]]) -> None:
-    """Dispara as acções. Fire-and-forget: falha de hardware nunca estraga a fala."""
+    """Fires the actions. Fire-and-forget: a hardware failure never spoils the speech."""
     validar_rotas(hass)
     for rota, params in chamadas:
         destino = ROTAS.get(rota)
         if destino is None:
-            _LOGGER.debug("HW marcador sem rota mapeada: %s", rota)
+            _LOGGER.debug("HW marker with no mapped route: %s", rota)
             continue
         entidade, tipo = destino
         if hass.states.get(entidade) is None:
-            _LOGGER.warning("HW marcador %s: a entidade %s não existe", rota, entidade)
+            _LOGGER.warning("HW marker %s: entity %s does not exist", rota, entidade)
             continue
         params, cortes = _limitar(rota, params)
         for corte in cortes:
-            _LOGGER.info("HW limite aplicado em %s: %s", rota, corte)
+            _LOGGER.info("HW limit applied on %s: %s", rota, corte)
         try:
             await _chamar(hass, entidade, tipo, params)
         except Exception as exc:  # noqa: BLE001
-            _LOGGER.warning("HW marcador %s falhou em %s: %s", rota, entidade, exc)
+            _LOGGER.warning("HW marker %s failed on %s: %s", rota, entidade, exc)
 
 
 async def _chamar(hass, entidade: str, tipo: str, params: dict[str, Any]) -> None:
@@ -222,8 +222,8 @@ async def _chamar(hass, entidade: str, tipo: str, params: dict[str, Any]) -> Non
         )
 
 
-# Convenção enviada SÓ nos turnos do painel de voz (ver is_panel_device). Curta
-# de propósito: é paga em tokens a cada pedido do painel que chega ao Hermes.
+# Convention sent ONLY on voice-panel turns (see is_panel_device). Short on
+# purpose: it is paid in tokens on every panel request that reaches Hermes.
 PANEL_RULE = (
     "Convenção do painel de voz: se a resposta tiver de mostrar algo no ecrã, "
     'começa com [HW:/display/info:{"text":"..."}] (máx. 60 caracteres, sem repetir '
@@ -245,7 +245,7 @@ PANEL_RULE = (
 
 
 def is_panel_device(hass, user_input) -> bool:
-    """True quando o pedido vem do painel MAX35-TV (registry: nome/modelo)."""
+    """True when the request comes from the MAX35-TV panel (registry: name/model)."""
     satellite = str(getattr(user_input, "satellite_id", "") or "").lower()
     if "mini_tv" in satellite or "max35" in satellite:
         return True
@@ -256,7 +256,7 @@ def is_panel_device(hass, user_input) -> bool:
         from homeassistant.helpers import device_registry as dr
 
         dev = dr.async_get(hass).async_get(dev_id)
-    except Exception:  # noqa: BLE001 - registry indisponível não pode partir a conversa
+    except Exception:  # noqa: BLE001 - registry unavailable must not break the chat
         return False
     if dev is None:
         return False

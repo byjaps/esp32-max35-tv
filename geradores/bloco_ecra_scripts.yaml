@@ -1,8 +1,8 @@
-  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL ---------------------------------
-  #   0 espera · 1 a ouvir · 2 a pensar · 3 a falar · 4 a tocar · 5 a dormir
-  #   6 sem ligação · 7 alarme do temporizador
-  # `ui_base` repõe tudo e arranca a respiração; cada estado acrescenta as suas
-  # animações. Só corre quando o estado muda (nunca em ciclo).
+  # --- ROBOT FACE: applies the state to the LVGL screen --------------------------
+  #   0 standby · 1 listening · 2 thinking · 3 speaking · 4 playing · 5 asleep
+  #   6 no connection · 7 timer alarm
+  # `ui_base` resets everything and starts the breathing; each state adds its own
+  # animations. It only runs when the state changes (never in a loop).
   - id: ui_base
     then:
       - lambda: "id(anim_ok) = false;"
@@ -12,8 +12,8 @@
            nota_a, nota_b, z_a, z_b, z_c,
            anel_1, anel_2, anel_3, olhos_saltam, led_pulsa]
       - lambda: "id(anim_ok) = true;"
-      # Cabeca e robo voltam ao sitio: parar uma animacao a meio deixava o x/y
-      # deslocados (o robo ficava fora do centro depois de tremer).
+      # Head and robot return to place: stopping an animation midway left x/y
+      # offset (the robot ended up off-centre after shaking).
       - lvgl.widget.update: {id: cabeca, transform_rotation: 0}
       - lvgl.widget.update: {id: robo, x: 0, y: 0}
       - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_big, led_antena]
@@ -31,8 +31,8 @@
 
   - id: ui_espera
     then:
-      # Relogio sempre no tamanho grande (pedido do autor, 29/10): nao ha troca
-      # de fonte entre estados — so a cor muda no estado de noite.
+      # Clock always at the large size (author request, 29/10): there is no font
+      # swap between states — only the colour changes in night mode.
       - lvgl.widget.hide: relogio_small
       - lvgl.widget.show: relogio_big
 
@@ -98,8 +98,8 @@
     then:
       - lambda: |-
           int est = id(va_state);
-          // O alarme manda em tudo; o media só aparece fora de uma conversa
-          // (o TTS também passa pelo media player).
+          // The alarm outranks everything; media only shows outside a conversation
+          // (TTS also goes through the media player).
           if (id(alarme_tocar).state) est = 7;
           else if (id(mp_playing) && est == 0) est = 4;
           id(ecra_est) = est;
@@ -148,7 +148,7 @@
                                               else:
                                                 - script.execute: ui_espera
 
-  # Piscar de olhos: tapa os olhos 110 ms e volta a abrir (só em espera).
+  # Eye blink: covers the eyes for 110 ms and opens them again (standby only).
   - id: ui_piscar
     then:
       - if:

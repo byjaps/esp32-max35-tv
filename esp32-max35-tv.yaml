@@ -1,216 +1,216 @@
 # =============================================================================
 # ESP32-S3 MAX35-TV-W (Spotpear) — Voice Assistant + HUD  [v0.3.0]
-# Painel de voz do Hermes (HA assist satellite) — pt-PT
+# Hermes voice panel (HA assist satellite) — pt-PT
 #
-# Base de hardware verificada contra o ficheiro OFICIAL do fabricante/RealDeco:
+# Hardware base verified against the OFFICIAL manufacturer/RealDeco file:
 #   RealDeco/xiaozhi-esphome  devices/Under_Development/Modular/HW/spotpear-tv_hw.yaml
 #
-# v0.2.0 (12/09/2026) — primeira versão a correr na placa física:
-#   + BACKLIGHT GPIO42 (ledc, inverted) — sem isto o ecrã fica PRETO
-#   + transform do ST7796 (mirror_x/mirror_y/swap_xy) igual ao oficial
-#   + wake word: okay_nabu, so ele. Responde a "okay nabu" E a "okay hermes"
-#     (medido 17/09); o hey_jarvis e o hey_hermes sairam por nao responderem.
-#   + botão Reiniciar (reboot remoto) e botão Teste de som (prova o speaker)
-#   ~ touch GT911: endereço por confirmar pelo scan I2C no boot
+# v0.2.0 (12/09/2026) — first version to run on the physical board:
+#   + BACKLIGHT GPIO42 (ledc, inverted) — without this the screen stays BLACK
+#   + ST7796 transform (mirror_x/mirror_y/swap_xy) the same as the official one
+#   + wake word: okay_nabu, only that one. Replies to "okay nabu" AND to "okay hermes"
+#     (measured 17/09); hey_jarvis and hey_hermes were dropped for not responding.
+#   + Restart button (remote reboot) and Sound test button (tests the speaker)
+#   ~ GT911 touch: address still to be confirmed by the I2C scan at boot
 #
-# v0.11.0 (12/09/2026) — MEDIA PLAYER na coluna do painel:
-#   + media_player platform speaker (WAV 16 kHz mono, uma só pipeline)
-#   + scripts mp_stop_wake / mp_idle_resume (libertar o barramento I2S)
-#   Ver o bloco "MEDIA PLAYER" mais abaixo para o porquê do WAV 16 kHz.
+# v0.11.0 (12/09/2026) — MEDIA PLAYER on the panel speaker:
+#   + media_player platform speaker (WAV 16 kHz mono, a single pipeline)
+#   + scripts mp_stop_wake / mp_idle_resume (release the I2S bus)
+#   See the "MEDIA PLAYER" block further down for why WAV 16 kHz.
 #
-# v0.11.1 (12/09/2026) — CORREÇÃO do impasse do barramento I2S:
-#   O gatilho era o `on_play`, que só dispara DEPOIS de a pipeline tocar — e com
-#   o motor de wake word a segurar o barramento a pipeline nunca tocava, logo o
-#   motor nunca parava: a placa enchia o log de "Parent bus is busy" e acabou a
-#   não responder (precisou de corte de corrente). Agora:
-#   + trava global `mp_playing` + gatilho `on_turn_on` (chega ANTES da pipeline)
-#   + `on_idle` devolve o player a OFF para rearmar o on_turn_on
-#   + motor de wake word nunca arranca com `mp_playing` (mww_resume + interval)
-#   + push-to-talk para o media player antes de abrir a conversa
+# v0.11.1 (12/09/2026) — FIX for the I2S bus deadlock:
+#   The trigger was `on_play`, which only fires AFTER the pipeline plays — and with
+#   the wake word engine holding the bus the pipeline never played, so the
+#   engine never stopped: the board filled the log with "Parent bus is busy" and ended up
+#   not responding (needed a power cycle). Now:
+#   + global lock `mp_playing` + `on_turn_on` trigger (arrives BEFORE the pipeline)
+#   + `on_idle` returns the player to OFF to re-arm on_turn_on
+#   + wake word engine never starts while `mp_playing` (mww_resume + interval)
+#   + push-to-talk for the media player before opening the conversation
 #
-# v0.12.0 (12/09/2026) — ECRÃ DE MEDIA + VOLUME ÚNICO:
-#   + ecrã mostra "A TOCAR" + título + barra de volume enquanto há media
-#     (entidade `text` "Titulo do media" — o HA escreve lá o que está a tocar)
-#   + watchdog de 2 s: o motor de wake word nunca corre com media armado, e
-#     destrava sozinho se o comando for aceite mas nada chegar a tocar
-#   + volume único (`vol_pct`): o `number` e o `media_player` escrevem os dois
-#     no mesmo speaker e divergiam (65% vs 82%); agora seguem-se um ao outro
-#   + on_boot alinha o volume do media player (ele restaurava o último guardado
-#     e reescrevia o do speaker — era daí que vinha o 100% que saturava)
+# v0.12.0 (12/09/2026) — MEDIA SCREEN + SINGLE VOLUME:
+#   + screen shows "A TOCAR" + title + volume bar while there is media
+#     (`text` entity "Titulo do media" — HA writes what is playing there)
+#   + 2 s watchdog: the wake word engine never runs with media armed, and
+#     frees itself if the command is accepted but nothing ever starts playing
+#   + single volume (`vol_pct`): the `number` and the `media_player` both write
+#     to the same speaker and diverged (65% vs 82%); now they follow each other
+#   + on_boot aligns the media player volume (it restored the last saved value
+#     and rewrote the speaker one — that is where the clipping 100% came from)
 #
-# v0.12.1 (12/09/2026) — ecrã de media só fora de conversas:
-#   O TTS do assistente passa pelo `announcement_pipeline` deste media player
-#   (`voice_assistant: TTS stream start` -> `State changed to ANNOUNCING`), logo
-#   `mp_playing` ficava a true durante a resposta e o ecrã trocava para "A TOCAR"
-#   a meio da fala. O ecrã de media passa a exigir `va_state == 0`.
+# v0.12.1 (12/09/2026) — media screen only outside conversations:
+#   The assistant TTS goes through this media player's `announcement_pipeline`
+#   (`voice_assistant: TTS stream start` -> `State changed to ANNOUNCING`), so
+#   `mp_playing` stayed true during the reply and the screen switched to "A TOCAR"
+#   mid-speech. The media screen now requires `va_state == 0`.
 #
-# v0.12.2 (12/09/2026) — volume sobrevive a reinícios:
-#   O `number` "Volume da coluna" passa a `restore_value: true` e é ele que manda
-#   no arranque (o `on_boot` alinha o speaker e o media player no valor dele).
-#   Sem isto, cada OTA/reboot repunha 75 e apagava a escolha do autor.
+# v0.12.2 (12/09/2026) — volume survives reboots:
+#   The `number` "Volume da coluna" now uses `restore_value: true` and it is the one in charge
+#   at boot (the `on_boot` aligns the speaker and the media player to its value).
+#   Without this, every OTA/reboot reset it to 75 and wiped the author's choice.
 #
-# v0.13.0 (12/09/2026) — piso audivel (a pedido do autor):
-#   O curso 0-100 da UI passa a mapear em vol_min..vol_max (0.35..0.80 no speaker)
-#   em vez de 0.0..0.75. Motivo medido no ES8311 (reg 0x32, dB = reg*0.5 - 95.5):
-#   a 0.2625 — que era o "35" que o autor apontava — são -62 dB e nao se ouve nada;
-#   metade de baixo do slider era deserto. Agora o minimo vale -51 dB (0.35) e o
-#   maximo sobe de 0 dB (0.75) para +6.5 dB (0.80).
+# v0.13.0 (12/09/2026) — audible floor (at the author's request):
+#   The 0-100 UI range now maps onto vol_min..vol_max (0.35..0.80 on the speaker)
+#   instead of 0.0..0.75. Reason measured on the ES8311 (reg 0x32, dB = reg*0.5 - 95.5):
+#   at 0.2625 — which was the "35" the author pointed at — that is -62 dB and nothing is heard;
+#   the lower half of the slider was a desert. Now the minimum gives -51 dB (0.35) and the
+#   maximum goes from 0 dB (0.75) up to +6.5 dB (0.80).
 #
-# v0.13.1 (12/09/2026) — teto de volta e fim da luta de volumes:
-#   O teto de 0.80 (+6.5 dB) distorcia: recusado pelo autor, volta a 0.75 (0 dB).
-#   O piso de 0.35 (-51 dB) FICA — e o ponto a partir do qual se ouve.
-#   O volume passa a ser por EVENTO nos dois sentidos (`on_volume` espelha no
-#   `number`) em vez de sondagem de 2 s: o media player DESCARTA sets de volume
-#   quando a fila esta cheia (`xQueueSend(..., 0)`), logo adoptar o valor dele
-#   deixava o number preso num valor antigo (visto: 90, depois 100).
+# v0.13.1 (12/09/2026) — ceiling back and end of the volume fight:
+#   The 0.80 ceiling (+6.5 dB) distorted: rejected by the author, back to 0.75 (0 dB).
+#   The 0.35 floor (-51 dB) STAYS — it is the point from which one can hear.
+#   Volume is now EVENT-driven in both directions (`on_volume` mirrors it in the
+#   `number`) instead of 2 s polling: the media player DISCARDS volume sets
+#   when the queue is full (`xQueueSend(..., 0)`), so adopting its value
+#   left the number stuck at an old value (seen: 90, then 100).
 #
-# v0.14.0 (12/09/2026) — ECRÃ: HUD "arc reactor" (o anel que o autor escolheu):
-#   + anel de estado animado (cor + velocidade por estado), portado do canvas
-#     do HUD jarvis_ai para as primitivas do display do ESPHome (filled_ring/
-#     filled_circle/filled_triangle) — SEM alpha: o que era `globalAlpha` e
-#     misturado com o preto do fundo antes de escrever o pixel
-#   + ecra de media: o anel passa a mostrar o VOLUME (arco verde) + "A TOCAR",
-#     titulo, estacao e barra
-#   + rodape com bateria; relogio no topo
-#   + removido o switch "Speaker Enabled" (disparava speaker.mute_off no
-#     arranque e disputava o barramento I2S — ruido no log, sem funcao)
-#   + sensor de Uptime (para confirmar reinicios inesperados)
-#   ⚠️ ATÉ v0.16.0 SEM LVGL de proposito (anel com quads em primitivas nativas);
-#      desde a v0.16.0 quem desenha é o LVGL, gerado por `gera_face.py` a partir
-#      do manifest do mockup. Ver a skill `esphome-esp32-voice-panel` → ecra-lvgl.md.
+# v0.14.0 (12/09/2026) — SCREEN: "arc reactor" HUD (the ring the author chose):
+#   + animated state ring (colour + speed per state), ported from the jarvis_ai
+#     HUD canvas to the ESPHome display primitives (filled_ring/
+#     filled_circle/filled_triangle) — NO alpha: what was `globalAlpha` is
+#     blended with the background black before writing the pixel
+#   + media screen: the ring now shows the VOLUME (green arc) + "A TOCAR",
+#     title, station and bar
+#   + footer with battery; clock at the top
+#   + removed the "Speaker Enabled" switch (it fired speaker.mute_off at
+#     boot and fought over the I2S bus — log noise, no function)
+#   + Uptime sensor (to confirm unexpected reboots)
+#   ⚠️ UNTIL v0.16.0 DELIBERATELY WITHOUT LVGL (ring drawn with quads in native primitives);
+#      since v0.16.0 LVGL does the drawing, generated by `gera_face.py` from
+#      the mockup manifest. See the `esphome-esp32-voice-panel` skill → ecra-lvgl.md.
 #
-#   ℹ️ 2026-10-05: a serie 0.15.x e feita com o ESPHome do `.venv313` (cron de
-#      segunda + `pip install --upgrade`). A 0.15.5 = 2026.9.0; a 0.15.6 =
-#      **2026.9.1**. Confirmar sempre dos dois lados: `esphome version` na
-#      maquina que compila e o sensor `versao do firmware` da placa (responde
+#   ℹ️ 2026-10-05: the 0.15.x series is built with the ESPHome from `.venv313` (Monday
+#      cron + `pip install --upgrade`). 0.15.5 = 2026.9.0; 0.15.6 =
+#      **2026.9.1**. Always confirm on both sides: `esphome version` on the
+#      machine that compiles and the board's `versao do firmware` sensor (answers
 #      "0.15.6 (ESPHome 2026.9.1)").
-#      HISTORICO (para quem voltar a ver reinicios de ~60 s): em 20/09 um build
-#      2026.9.0 com a config DA ALTURA reiniciava a placa a cada ~60 s (uptime
-#      3,4 s -> 63,5 s -> 2,5 s, com rollback silencioso do bootloader) e por
-#      isso a serie 0.15.x ficou presa ao 2026.8.2. Os reinicios pararam com o
-#      watchdog do va_state (v0.15.3); desde entao a 0.15.4 e a 0.15.5 nao
-#      mostram reinicios (o unico motivo de reset e' `Reboot request from
-#      esphome.ota`, ou seja, os nossos proprios flashes).
-# v0.15.12 (18/10/2026) — ÁUDIO PERDIDO NO ARRANQUE DO TURNO (a causa real de ter
-#   de repetir comandos). Prova no log com debug do assist_pipeline: a mesma
-#   sessão transcreveu "Que horas sao?" e "Liga a luz pequena." direitinho, mas
-#   "agora desliga" chegou ao STT como "Porta de liga." — o INÍCIO do áudio caiu.
-#   O `Cannot receive audio, buffer is full` de cada turno era o buffer da
-#   pipeline a transbordar. Origem: cada frame do ecrã custa ~150 ms de loop
-#   principal e a 4 fps são ~60% do tempo a desenhar (mipi_spi, 307 KB/frame).
-#   Correção: `hud_set` põe a animação a 0 enquanto há conversa (o ecrã continua
-#   a atualizar 1x/s pelo `ecra_loop`) e repõe o ritmo do utilizador no fim.
-# v0.15.11 (18/10/2026) — o modo conversa funcionou, mas o teto de 3 cortava a
-#   conversa ao 4.o comando ("ao fim de poucos comandos volta a pedir o ok nabu").
-#   O teto é um travão para o caso de a TV disparar turnos sozinha, não um limite
-#   de uso: 5 -> 50 (`Respostas seguidas`), por omissão 10. Como o `number` tem
-#   `restore_value`, o valor antigo (3) fica na flash — depois do OTA é preciso
-#   pôr 10 no HA (`number.set_value`), senão continua a cortar aos 3.
-# v0.15.10 (18/10/2026) — CORREÇÃO do modo conversa da v0.15.9, que nunca abriu a
-#   janela. Duas causas, ambas visíveis só no log com `level: INFO` explícito:
-#   1) a condição exigia `id(va_state) == 0`, mas no `on_tts_stream_end` o estado
-#      ainda é 3 (a falar) — o hud_set só o põe a 0 no fim do `mww_resume`. A
-#      janela caía sempre no `else`. Retirado o teste do `va_state`.
-#   2) o `conv_janela` fechava só se `conv_espera && va_state == 1`; o mesmo
-#      problema pelo outro lado. Agora basta `conv_espera` (cai no
-#      `on_stt_vad_end` quando houve fala, logo distingue os dois casos).
-#   + `logger.log` do modo conversa com `level: INFO` (o `logger.log` sem level é
-#     DEBUG e o aparelho está em INFO — foi por isso que a 0.15.9 parecia morta).
-#   + delay 700ms -> 1200ms antes de reabrir: o amplificador ainda está a
-#     esvaziar quando o último byte sai.
-# v0.15.9 (18/10/2026) — MODO CONVERSA (pedido do autor: "respostas e ações
-#   rápidas, conversa fluida", depois de ver um demo em que se dão ordens seguidas
-#   sem repetir a wake word):
-#   + depois do TTS acabar, a placa reabre o microfone SOZINHA (sem "okay nabu")
-#     e o HA trata do VAD; se ninguém falar em 7 s, fecha e devolve o motor de
-#     wake word à escuta.
-#   + cadeia limitada por `conv_max` (number "Respostas seguidas", 0 = desligado,
-#     por omissão 3): sem este teto a placa ficava a ouvir a TV indefinidamente e
-#     cada ruído custava um turno do agente (6-40 s).
-#   + `conv_count` volta a 0 em cada wake word nova (on_start sem `conv_espera`).
-#   + `conversation_timeout` 5 s -> 8 s: a continuação conta como a MESMA conversa
-#     (contexto do HA mantém-se). ⚠️ Este campo NÃO é a janela de escuta — só
-#     reinicia o conversation_id; a janela é o `conv_janela` (7 s).
-#   NAO MEXER em `mww_resume`: continua a ser ele que devolve o motor à escuta
-#   quando o modo conversa não se aplica (ver a lição da v0.15.7/0.15.8).
-# v0.15.8 (14/10/2026) — REVERTIDA a v0.15.7 (era um erro meu):
-#   A guarda nova (`!id(box_speaker).is_running()` no mww_resume) deixava o motor
-#   de wake word parado ~30-60 s depois de cada resposta — medido pelo autor: "so
-#   passado prai 1 minuto e que volta a ouvir o ok nabu".
-#   PROVA NA FONTE DO ESPHOME (components/voice_assistant/voice_assistant.cpp,
-#   State::RESPONSE_FINISHED): o gatilho `on_tts_stream_end` SO dispara depois de
-#   `speaker_buffer_size_ == 0`, `!has_buffered_data()` E `!is_running()` — ou
-#   seja, quando TODO o audio ja saiu. Ao contrario do que eu supus, o gatilho
-#   nao e "o HA acabou de enviar". O `delay: 1s` original (15 x 400 ms) ja era
-#   correto e o `is_running()` fica true mais tempo do que a reproducao, logo a
-#   guarda so podia bloquear.
-#   NAO REPETIR: nao voltar a condicionar o arranque do motor ao estado da
-#   coluna. Se a fala voltar a cortar, medir PRIMEIRO o audio (a cache do HA em
-#   /config/tts/ e o caminho do ficheiro ate a coluna) — o corte nao vem daqui.
-# v0.15.7 (14/10/2026) — FIM DA FALA CORTADA A MEIO (REVERTIDA na v0.15.8):
-#   O motor de wake word voltava a escuta 1 s depois de o HA ACABAR DE ENVIAR o
-#   audio (on_tts_stream_end), sem olhar ao altifalante. Resultado medido no
-#   painel: a resposta "Desligado" comecava e cortava a meio. O mesmo audio,
-#   tocado pelo media_player (onde o `mp_playing` ja protegia), deu 18,6 s dos
-#   18,9 s do ficheiro — logo o problema era o motor a agarrar o barramento I2S
-#   durante a reproducao. mww_resume passa a exigir tambem
-#   `!id(box_speaker).is_running()` (o `speaker` do ESPHome expoe esse estado) e
-#   espera ate 30 s em vez de 6 s; se esgotar, liga o motor na mesma (nunca fica
-#   surdo ao "Okay Nabu").
-# v0.15.6 (05/10/2026) — SÓ atualização do ESPHome: 2026.9.0 -> 2026.9.1.
-#   Config inalterada: o autor decidiu MANTER os dois modelos de wake word como
-#   estão. Razão (medido no sensor "Ultima wake word", 27/09-05/10): os falsos
-#   disparos com a TV estão REPARTIDOS — ~15 do `okay_nabu` (0.93) contra ~13 do
-#   `ok hermes` (0.90); os 3 que ele ouviu hoje ("Não percebi") foram do
-#   okay_nabu. Tirar o ok hermes só resolveria metade e não se perde nada (o
-#   okay_nabu já apanha "ok hermes", medido 17/09) — fica como opção se voltar.
-# v0.15.5 (26/09/2026) — ECRA MAIS CLEAN (pedido do autor):
-#   + "em espera" passou a BRANCO (era o mesmo ciano do "a falar" — no painel não
-#     se distinguiam; o ciano fica só para o "a falar");
-#   + saíram do ecrã: dia da semana, relógio do topo, data e bateria do rodapé
-#     (os sensores continuam no HA — só deixaram de ser desenhados);
-#   + as HORAS passaram para o centro do anel (font_med 40 px, branco), no lugar
-#     do texto "EM ESPERA".
-# v0.15.4 (26/09/2026) — CORRECAO DOS FALSOS DISPAROS (a TV acordava o painel):
-#   cutoff do modelo proprio `ok hermes` 0.50 -> 0.90. Medido antes de mexer:
-#   a 0.50 o painel acordou ~20x numa tarde (13:38-19:32) com fala de TV e a
-#   responder "Nao percebi"; o okay_nabu (0.93) nao disparou uma unica vez.
-# v0.15.2/0.15.3 (25/09/2026) — dois modelos de wake word (quatro frases), a Wake
-#   Word Library como fonte de modelos novos e o trabalho de latencia da voz.
-#   (As duas subiram no MESMO commit do repo — 465ede0 — e so a 0.15.3 ficou com
-#   o numero; o texto desta entrada vem do proprio commit, nao foi inventado.)
-# v0.15.1 (20/09/2026) — sensor "Motivo do ultimo reset" (diagnostico dos reinicios).
-# v0.15.0 (20/09/2026) — GESTOS NO BOTAO (pedido do autor):
-#   + clique curto = volume +10% | clique duplo = volume -10%
-#     (antigo: qualquer toque abria logo a conversa)
-#   + premir >=600 ms = assistente de voz (push-to-talk, como antes)
-#   + aviso de volume no HUD durante 1,5 s depois do clique (sem isto o gesto
-#     nao dava retorno nenhum quando nao ha media a tocar)
-#   ⚠️ O botao POWER da caixa NAO entra nisto: nao esta ligado a nenhum GPIO —
-#      vive no circuito de latch de alimentacao (U1 + Q1/Q2 + Power_EN). Nao ha
-#      gesto de firmware possivel nesse botao. Ver o bloco do botao.
+#      HISTORY (for whoever sees ~60 s reboots again): on 20/09 a build
+#      2026.9.0 with the config OF THE TIME rebooted the board every ~60 s (uptime
+#      3.4 s -> 63.5 s -> 2.5 s, with silent bootloader rollback) and for
+#      that reason the 0.15.x series stayed pinned to 2026.8.2. The reboots stopped with the
+#      va_state watchdog (v0.15.3); since then 0.15.4 and 0.15.5 show no
+#      reboots (the only reset reason is `Reboot request from
+#      esphome.ota`, that is, our own flashes).
+# v0.15.12 (18/10/2026) — AUDIO LOST AT THE START OF THE TURN (the real cause of having
+#   to repeat commands). Proof in the log with assist_pipeline debug: the same
+#   session transcribed "Que horas sao?" and "Liga a luz pequena." correctly, but
+#   "agora desliga" reached the STT as "Porta de liga." — the START of the audio dropped.
+#   The `Cannot receive audio, buffer is full` of every turn was the pipeline
+#   buffer overflowing. Source: each screen frame costs ~150 ms of the main
+#   loop and at 4 fps that is ~60% of the time drawing (mipi_spi, 307 KB/frame).
+#   Fix: `hud_set` sets the animation to 0 while there is a conversation (the screen keeps
+#   updating 1x/s through `ecra_loop`) and restores the user's pace at the end.
+# v0.15.11 (18/10/2026) — conversation mode worked, but the ceiling of 3 cut the
+#   conversation at the 4th command ("after a few commands it asks for ok nabu again").
+#   The ceiling is a brake in case the TV fires turns on its own, not a usage
+#   limit: 5 -> 50 (`Respostas seguidas`), default 10. Since the `number` has
+#   `restore_value`, the old value (3) stays in flash — after the OTA you must
+#   set 10 in HA (`number.set_value`), otherwise it keeps cutting at 3.
+# v0.15.10 (18/10/2026) — FIX for the v0.15.9 conversation mode, which never opened the
+#   window. Two causes, both visible only in the log with explicit `level: INFO`:
+#   1) the condition required `id(va_state) == 0`, but in `on_tts_stream_end` the state
+#      is still 3 (speaking) — hud_set only sets it to 0 at the end of `mww_resume`. The
+#      window always fell into the `else`. Removed the `va_state` test.
+#   2) `conv_janela` closed only if `conv_espera && va_state == 1`; the same
+#      problem from the other side. Now `conv_espera` alone is enough (it falls in
+#      `on_stt_vad_end` when there was speech, so it tells the two cases apart).
+#   + `logger.log` in conversation mode with `level: INFO` (a `logger.log` without level is
+#     DEBUG and the device is at INFO — that is why 0.15.9 looked dead).
+#   + delay 700ms -> 1200ms before reopening: the amplifier is still
+#     draining when the last byte leaves.
+# v0.15.9 (18/10/2026) — CONVERSATION MODE (author's request: "fast replies and
+#   actions, fluid conversation", after seeing a demo where orders are given back to back
+#   without repeating the wake word):
+#   + after the TTS ends, the board reopens the microphone BY ITSELF (no "okay nabu")
+#     and HA handles the VAD; if nobody speaks within 7 s, it closes and hands the
+#     wake word engine back to listening.
+#   + chain limited by `conv_max` (number "Respostas seguidas", 0 = off,
+#     default 3): without this ceiling the board would listen to the TV indefinitely and
+#     every noise cost one agent turn (6-40 s).
+#   + `conv_count` goes back to 0 on every new wake word (on_start without `conv_espera`).
+#   + `conversation_timeout` 5 s -> 8 s: the follow-up counts as the SAME conversation
+#     (the HA context is kept). ⚠️ This field is NOT the listening window — it only
+#     resets the conversation_id; the window is `conv_janela` (7 s).
+#   DO NOT TOUCH `mww_resume`: it is still what returns the engine to listening
+#   when conversation mode does not apply (see the v0.15.7/0.15.8 lesson).
+# v0.15.8 (14/10/2026) — v0.15.7 REVERTED (it was a mistake of mine):
+#   The new guard (`!id(box_speaker).is_running()` in mww_resume) left the wake word
+#   engine stopped for ~30-60 s after every reply — measured by the author: "only
+#   after about 1 minute does it hear the ok nabu again".
+#   PROOF IN THE ESPHOME SOURCE (components/voice_assistant/voice_assistant.cpp,
+#   State::RESPONSE_FINISHED): the `on_tts_stream_end` trigger ONLY fires after
+#   `speaker_buffer_size_ == 0`, `!has_buffered_data()` AND `!is_running()` — that
+#   is, once ALL the audio has already left. Contrary to what I assumed, the trigger
+#   is not "HA has just finished sending". The original `delay: 1s` (15 x 400 ms) was already
+#   correct and `is_running()` stays true longer than the playback, so the
+#   guard could only block.
+#   DO NOT REPEAT: do not condition the engine start on the speaker
+#   state again. If the speech gets cut again, measure the AUDIO FIRST (the HA cache in
+#   /config/tts/ and the file path to the speaker) — the cut does not come from here.
+# v0.15.7 (14/10/2026) — END OF SPEECH CUT IN HALF (REVERTED in v0.15.8):
+#   The wake word engine returned to listening 1 s after HA FINISHED SENDING the
+#   audio (on_tts_stream_end), without looking at the speaker. Result measured on the
+#   panel: the reply "Desligado" began and was cut half-way. The same audio,
+#   played by the media_player (where `mp_playing` already protected it), gave 18.6 s of the
+#   18.9 s of the file — so the problem was the engine grabbing the I2S bus
+#   during playback. mww_resume now also requires
+#   `!id(box_speaker).is_running()` (the ESPHome `speaker` exposes that state) and
+#   waits up to 30 s instead of 6 s; if it runs out, it starts the engine anyway (it never stays
+#   deaf to "Okay Nabu").
+# v0.15.6 (05/10/2026) — ESPHome upgrade ONLY: 2026.9.0 -> 2026.9.1.
+#   Config unchanged: the author decided to KEEP both wake word models as
+#   they are. Reason (measured on the "Ultima wake word" sensor, 27/09-05/10): the false
+#   triggers with the TV are SPLIT — ~15 from `okay_nabu` (0.93) against ~13 from
+#   `ok hermes` (0.90); the 3 he heard today ("Não percebi") were from
+#   okay_nabu. Removing ok hermes would only solve half and nothing is lost (the
+#   okay_nabu already catches "ok hermes", measured 17/09) — it stays as an option if it returns.
+# v0.15.5 (26/09/2026) — CLEANER SCREEN (author's request):
+#   + "em espera" became WHITE (it was the same cyan as "a falar" — on the panel
+#     they were not told apart; the cyan is now only for "a falar");
+#   + gone from the screen: weekday, top clock, date and footer battery
+#     (the sensors are still in HA — they just stopped being drawn);
+#   + the TIME moved to the centre of the ring (font_med 40 px, white), in place
+#     of the "EM ESPERA" text.
+# v0.15.4 (26/09/2026) — FIX FOR THE FALSE TRIGGERS (the TV was waking the panel):
+#   cutoff of the custom model `ok hermes` 0.50 -> 0.90. Measured before touching it:
+#   at 0.50 the panel woke ~20x in one afternoon (13:38-19:32) with TV speech and
+#   replied "Nao percebi"; the okay_nabu (0.93) did not fire a single time.
+# v0.15.2/0.15.3 (25/09/2026) — two wake word models (four phrases), the Wake
+#   Word Library as the source of new models and the voice latency work.
+#   (Both went up in the SAME repo commit — 465ede0 — and only 0.15.3 kept
+#   the number; the text of this entry comes from the commit itself, not invented.)
+# v0.15.1 (20/09/2026) — "Motivo do ultimo reset" sensor (diagnosis of the reboots).
+# v0.15.0 (20/09/2026) — BUTTON GESTURES (author's request):
+#   + short click = volume +10% | double click = volume -10%
+#     (old: any touch opened the conversation straight away)
+#   + press >=600 ms = voice assistant (push-to-talk, as before)
+#   + volume notice on the HUD for 1.5 s after the click (without this the gesture
+#     gave no feedback at all when there is no media playing)
+#   ⚠️ The box's POWER button is NOT part of this: it is not wired to any GPIO —
+#      it lives in the power latch circuit (U1 + Q1/Q2 + Power_EN). There is no
+#      possible firmware gesture on that button. See the button block.
 # =============================================================================
 
 substitutions:
   name: esp32-max35-tv
   friendly_name: "Mini TV Assistente"
   rotate_display: "0"
-  # --- TETO DE VOLUME --------------------------------------------------------
-  # O ES8311 satura acima de ~0 dB. O driver quer 0xBF (= 0.75 no curso do
-  # speaker, os "75%" antigos); a partir daí a fala fica irreconhecível e a
-  # música distorce. O limite passa a estar na escala da INTERFACE: 100% nos
-  # controlos (HA/number/ecrã) = 0.75 no speaker. Nada na UI passa disto.
-  # Escala de volume: 0-100 na UI -> vol_min..vol_max no speaker (cru, 0.0-1.0).
-  # No ES8311 o registo 0x32 e -95.5 dB (0x00) .. 0 dB (0xBF=191) .. +32 dB (0xFF),
-  # linear: dB = reg*0.5 - 95.5. Daí:
-  #   vol_min 0.35 -> reg 89  -> -51 dB (o mais baixo que ainda se ouve; abaixo
-  #                 disto e deserto morto — era o "35" antigo, a -62 dB)
-  #   vol_max 0.75 -> reg 191 -> 0 dB (o maximo ANTES de distorcer). 0.80 (+6.5 dB)
-  #                 ja distorcia — testado e recusado pelo autor a 12/09.
+  # --- VOLUME CEILING --------------------------------------------------------
+  # The ES8311 saturates above ~0 dB. The driver wants 0xBF (= 0.75 on the
+  # speaker range, the old "75%"); beyond that the speech becomes unrecognisable and the
+  # music distorts. The limit now sits on the INTERFACE scale: 100% on the
+  # controls (HA/number/screen) = 0.75 on the speaker. Nothing in the UI goes past this.
+  # Volume scale: 0-100 on the UI -> vol_min..vol_max on the speaker (raw, 0.0-1.0).
+  # On the ES8311 register 0x32 is -95.5 dB (0x00) .. 0 dB (0xBF=191) .. +32 dB (0xFF),
+  # linear: dB = reg*0.5 - 95.5. Hence:
+  #   vol_min 0.35 -> reg 89  -> -51 dB (the lowest that can still be heard; below
+  #                 this it is a dead zone — it was the old "35", at -62 dB)
+  #   vol_max 0.75 -> reg 191 -> 0 dB (the maximum BEFORE distorting). 0.80 (+6.5 dB)
+  #                 already distorted — tested and rejected by the author on 12/09.
   vol_min: "0.35"
   vol_max: "0.75"
-  vol_default: "75"   # volume inicial, em % da escala da UI
-  fw_version: "0.17.14"   # versao do firmware (project.version + sensor no HA)
+  vol_default: "75"   # initial volume, as % of the UI scale
+  fw_version: "0.17.14"   # firmware version (project.version + sensor in HA)
 
 esphome:
   name: ${name}
@@ -220,36 +220,36 @@ esphome:
   project:
     name: hermes.max35-tv
     version: "${fw_version}"
-  # O componente `speaker` arranca com volume 1.0, e isso escreve 0xFF no
-  # registo de volume do ES8311 = GANHO MAXIMO. O driver do ES8311 quer 0xBF
-  # (0 dB) — o valor 0xFF fica muito acima e o sinal SATURA. Sintoma exato:
-  # a musica/melodia ainda se reconhece (um tom saturado continua a soar a
-  # tom), mas a FALA fica irreconhecivel, com ruido por cima.
-  # on_boot a -100 corre DEPOIS do setup do speaker (PROCESSOR = 0), logo
-  # esta correcao prevalece sobre o 1.0.
+  # The `speaker` component starts at volume 1.0, and that writes 0xFF to the
+  # ES8311 volume register = MAXIMUM GAIN. The ES8311 driver wants 0xBF
+  # (0 dB) — the value 0xFF sits far above it and the signal SATURATES. Exact symptom:
+  # the music/melody is still recognisable (a saturated tone still sounds like a
+  # tone), but the SPEECH becomes unrecognisable, with noise on top.
+  # on_boot at -100 runs AFTER the speaker setup (PROCESSOR = 0), so
+  # this correction prevails over the 1.0.
   on_boot:
     priority: -100
     then:
-      # ECRÃ: o LVGL desenha-se sozinho; aqui so se aplica o estado inicial.
+      # SCREEN: LVGL paints itself; here only the initial state is applied.
       - script.execute: {id: ui_aplica}
-      # VOLUME: manda o `number` (guardado entre reinícios). O media player
-      # restaura as preferências DELE, que podem ser outras — era daí que vinha
-      # um 100% que saturava o ES8311. Alinhar os dois no valor do number.
-      # O piso de 5% evita acordar a coluna muda se a preferência vier corrompida.
+      # VOLUME: the `number` is in charge (saved across reboots). The media player
+      # restores ITS OWN preferences, which may be different — that is where a
+      # 100% that saturated the ES8311 came from. Align both to the number value.
+      # The 5% floor avoids waking the speaker muted if the preference comes back corrupt.
       - lambda: "id(vol_pct) = (id(vol_speaker).state >= 5.0f) ? id(vol_speaker).state : ${vol_default};"
-      # speaker.volume_set cru: aqui o valor e vol_min..vol_max do speaker, NAO a
-      # escala da UI — daí o remap linear min + pct*(max-min).
+      # speaker.volume_set raw: here the value is the speaker's vol_min..vol_max, NOT the
+      # UI scale — hence the linear remap min + pct*(max-min).
       - speaker.volume_set:
           id: box_speaker
           volume: !lambda "return ${vol_min} + (id(vol_pct) / 100.0f) * (${vol_max} - ${vol_min});"
-      # (A escala do media player e a da UI; o volume_max remapeia-a.)
+      # (The media player scale is the UI one; volume_max remaps it.)
       - media_player.volume_set:
           id: painel_mp
           volume: !lambda "return id(vol_pct) / 100.0f;"
-      # ARRANQUE do motor de wake word. O start() desiste se o componente
-      # ainda nao estiver em fase de loop (is_ready()), e o on_boot corre
-      # durante o setup - por isso o atraso e OBRIGATORIO. O intervalo mais
-      # abaixo volta a tentar, como rede de seguranca.
+      # START of the wake word engine. start() gives up if the component
+      # is not yet in the loop phase (is_ready()), and on_boot runs
+      # during setup - so the delay is MANDATORY. The interval further
+      # down tries again, as a safety net.
       - delay: 10s
       - micro_wake_word.start:
           id: mww
@@ -272,17 +272,17 @@ psram:
 
 logger:
   hardware_uart: USB_SERIAL_JTAG
-  # INFO (estava em DEBUG, temporario, para apanhar o scan I2C e o arranque do
-  # wake word — essa fase esta fechada). Menos ruido e menos CPU a formatar
-  # linhas que ninguem le.
+  # INFO (it was at DEBUG, temporarily, to catch the I2C scan and the wake word
+  # start-up — that phase is closed). Less noise and less CPU formatting
+  # lines nobody reads.
   level: INFO
   logs:
-    # ⚠️ O ecra redesenha-se a ~4 fps e CADA frame custa ~150 ms medidos no log
+    # ⚠️ The screen redraws at ~4 fps and EACH frame costs ~150 ms measured in the log
     # ("ecra_loop took a long time for an operation (150 ms), max is 50 ms").
-    # O custo e ESTRUTURAL, nao e avaria: o mipi_spi empurra o buffer TODO
-    # (480x320x16 bits = 307 KB; so de SPI a 40 MHz sao ~61 ms) e nao tem
-    # update parcial. Silencia-se SO este tag (avisos) — os [E] continuam a
-    # aparecer — para o log nao encher com um aviso que se repete a cada frame.
+    # The cost is STRUCTURAL, not a fault: mipi_spi pushes the WHOLE buffer
+    # (480x320x16 bits = 307 KB; SPI alone at 40 MHz is ~61 ms) and has no
+    # partial update. Only this tag is silenced (warnings) — the [E] still
+    # show up — so the log does not fill with a warning repeated every frame.
     component: ERROR
 
 api:
@@ -291,18 +291,18 @@ api:
 
 ota:
   - platform: esphome
-    # ⚠️ SEM `encryption:` de proposito: o build em uso e o 2026.9.0 (que ja
-    # suporta OTA cifrado) MAS a placa ainda oferece OTA em texto simples, e o
-    # CLI e fail-closed. Ver a skill home-assistant ref
-    # esphome-api-encryption.md para a ordem correta antes de acrescentar
-    # `encryption:` aqui.
+    # ⚠️ NO `encryption:` on purpose: the build in use is 2026.9.0 (which already
+    # supports encrypted OTA) BUT the board still offers plain-text OTA, and the
+    # CLI is fail-closed. See the home-assistant skill ref
+    # esphome-api-encryption.md for the correct order before adding
+    # `encryption:` here.
 
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
-  power_save_mode: NONE   # sem delay na resposta de voz
+  power_save_mode: NONE   # no delay in the voice reply
 
-# --- BOTÕES DE SERVIÇO -------------------------------------------------------
+# --- SERVICE BUTTONS ---------------------------------------------------------
 button:
   - platform: restart
     name: "Reiniciar"
@@ -312,19 +312,19 @@ button:
     on_press:
       - rtttl.play: "escala:d=8,o=5,b=180:c,d,e,f,g,a,b,c6"
 
-# --- BOTAO: GESTOS (clique curto / duplo / premir longo) ---------------------
-# ⚠️ Ha DOIS botoes na caixa (BOOT e POWER) mas so o BOOT chega ao ESP32.
-# O botao de POWER esta no circuito de latch de alimentacao da placa (IC U1 +
-# Q1/Q2 APM2307 + net Power_EN, no esquematico ESP32S3-3.5inch-AI-1.pdf): nenhum
-# GPIO lhe toca, logo o firmware NAO o ve e nao lhe pode dar gestos — o ligar/
-# desligar e da eletronica do latch, seja qual for a duracao do toque.
-# Gestos implementados neste unico botao lido (GPIO0):
-#   clique curto (<=400 ms) ..... volume +10%
-#   clique duplo (2x <=400 ms) .. volume -10%
-#   premir >=600 ms ............. assistente de voz (push-to-talk)
-# Os 400/600 ms deixam uma zona morta de 200 ms DE PROPOSITO: garante que
-# nenhuma sequencia de toques dispara dois gestos ao mesmo tempo (com o limiar
-# do clique igual ao do premir, um toque no limite disparava ambos).
+# --- BUTTON: GESTURES (short click / double click / long press) --------------
+# ⚠️ There are TWO buttons on the box (BOOT and POWER) but only BOOT reaches the ESP32.
+# The POWER button is in the board's power latch circuit (IC U1 +
+# Q1/Q2 APM2307 + net Power_EN, in schematic ESP32S3-3.5inch-AI-1.pdf): no
+# GPIO touches it, so the firmware does NOT see it and cannot give it gestures — on/off
+# is done by the latch electronics, whatever the touch duration.
+# Gestures implemented on this single read button (GPIO0):
+#   short click (<=400 ms) ..... volume +10%
+#   double click (2x <=400 ms) .. volume -10%
+#   press >=600 ms ............. voice assistant (push-to-talk)
+# The 400/600 ms leave a 200 ms dead zone ON PURPOSE: it guarantees that
+# no sequence of touches fires two gestures at the same time (with the click
+# threshold equal to the press one, a touch at the limit fired both).
 binary_sensor:
   - platform: gpio
     pin:
@@ -334,18 +334,18 @@ binary_sensor:
     id: boot_button
     name: "Botão"
     on_multi_click:
-      # --- clique curto: volume +10% ---
+      # --- short click: volume +10% ---
       - timing:
           - ON for at most 400ms
           - OFF for at least 350ms
         then:
           - logger.log:
-              # level INFO: o logger esta em INFO; sem isto (DEBUG) o gesto
-              # nao deixava rasto nenhum no log da placa.
+              # level INFO: the logger is at INFO; without this (DEBUG) the gesture
+              # left no trace at all in the board log.
               format: "Botao: clique -> volume +10%"
               level: INFO
           - script.execute: {id: vol_step, delta: 10.0}
-      # --- clique duplo: volume -10% ---
+      # --- double click: volume -10% ---
       - timing:
           - ON for at most 400ms
           - OFF for at most 300ms
@@ -353,65 +353,65 @@ binary_sensor:
           - OFF for at least 350ms
         then:
           - logger.log:
-              # level INFO: o logger esta em INFO; sem isto (DEBUG) o gesto
-              # nao deixava rasto nenhum no log da placa.
+              # level INFO: the logger is at INFO; without this (DEBUG) the gesture
+              # left no trace at all in the board log.
               format: "Botao: clique duplo -> volume -10%"
               level: INFO
           - script.execute: {id: vol_step, delta: -10.0}
-      # --- premir longo: push-to-talk ---
-      # Caminho FIAVEL para falar com o Hermes: os wake words em ingles falham
-      # com sotaque pt-PT (verificado). Premir (>=600 ms) = a ouvir; largar
-      # termina e envia.
+      # --- long press: push-to-talk ---
+      # RELIABLE way to talk to Hermes: the English wake words fail
+      # with a pt-PT accent (verified). Pressing (>=600 ms) = listening; releasing
+      # ends and sends.
       - timing:
           - ON for at least 600ms
         then:
           - logger.log:
-              # level INFO: o logger esta em INFO; sem isto (DEBUG) o gesto
-              # nao deixava rasto nenhum no log da placa.
+              # level INFO: the logger is at INFO; without this (DEBUG) the gesture
+              # left no trace at all in the board log.
               format: "PUSH-TO-TALK: a ouvir..."
               level: INFO
-          # Se houver media a tocar, parar primeiro: a coluna e o microfone
-          # partilham o barramento I2S e sem isto a conversa nunca arrancava.
+          # If there is media playing, stop it first: the speaker and the microphone
+          # share the I2S bus and without this the conversation never started.
           - if:
               condition:
                 lambda: "return id(mp_playing);"
               then:
                 - media_player.stop: painel_mp
           - voice_assistant.start:
-    # NAO enviar voice_assistant.stop ao LARGAR. O HA fecha o audio sozinho
-    # quando o VAD dele deteta o fim da fala (evento 12) e a placa para o
-    # microfone nesse instante. Mandar stop ao largar cortava a transcricao
-    # a meio — o whisper medium leva ~3 s — e era isso que obrigava a
-    # manter o dedo no botao (verificado no log em 12/09).
+    # Do NOT send voice_assistant.stop on RELEASE. HA closes the audio by itself
+    # when its VAD detects the end of speech (event 12) and the board stops the
+    # microphone at that instant. Sending stop on release cut the transcription
+    # half-way — whisper medium takes ~3 s — and that was what forced you to
+    # keep the finger on the button (verified in the log on 12/09).
 
-  # --- CARREGADOR LIGADO (GPIO7) ---------------------------------------------
-  # O LED vermelho da placa nao serve para isto: esta preso ao pino CHG do
-  # carregador (MP2636), nao a um GPIO — acende so enquanto passa corrente e
-  # apaga-se em segundos quando a bateria esta cheia. Quem diz se o carregador
-  # esta ligado e o GPIO7: o esquematico (ESP32S3-3.5inch-AI-1.pdf) mostra a
-  # tensao do USB dividida por R59 (20K) / R61 (30K) e ligada a esse pino
-  # (5 V -> 3,0 V no pino, que o ADC le; 0 V com o cabo fora).
+  # --- CHARGER PLUGGED IN (GPIO7) --------------------------------------------
+  # The board's red LED is no use for this: it is tied to the CHG pin of the
+  # charger (MP2636), not to a GPIO — it lights only while current flows and
+  # goes out within seconds when the battery is full. What tells whether the charger
+  # is plugged in is GPIO7: the schematic (ESP32S3-3.5inch-AI-1.pdf) shows the
+  # USB voltage divided by R59 (20K) / R61 (30K) and tied to that pin
+  # (5 V -> 3.0 V on the pin, which the ADC reads; 0 V with the cable out).
   - platform: template
     name: "Carregador ligado"
     id: carregador_ligado
     device_class: plug
     icon: "mdi:power-plug"
-    # Sem update_interval: o template binary_sensor nao aceita esse campo —
-    # o ESPHome reavalia o lambda sozinho sempre que `usb_voltage` muda.
+    # No update_interval: the template binary_sensor does not accept that field —
+    # ESPHome re-evaluates the lambda by itself whenever `usb_voltage` changes.
     lambda: |-
       float v = id(usb_voltage).state;
       if (isnan(v)) return {};
       return v > 3.5f;   // USB presente (~5 V) vs cabo fora (~0 V)
 
-# --- ESTADO (HUD) ------------------------------------------------------------
-# 0=em espera 1=a ouvir 2=a pensar 3=a falar 4=erro
+# --- STATE (HUD) -------------------------------------------------------------
+# 0=idle 1=listening 2=thinking 3=speaking 4=error
 globals:
   # v0.17.0 — trava as cadeias on_stop enquanto se mudam estados.
   - id: anim_ok
     type: bool
     restore_value: false
     initial_value: 'true'
-  # v0.16.3 — instante em que o alarme comecou (rede de seguranca).
+  # v0.16.3 — instant the alarm started (safety net).
   - id: alarme_ms
     type: uint32_t
     restore_value: false
@@ -425,18 +425,18 @@ globals:
     type: int
     restore_value: no
     initial_value: "0"
-  # 29/10/2026 — segundos que faltam ao proximo temporizador, calculados no
-  # `interval` de 1 s (nao no lambda do ecra) para o desenho ser barato e para
-  # haver um sensor de diagnostico legivel a distancia.
+  # 29/10/2026 — seconds left until the next timer, computed in the
+  # 1 s `interval` (not in the screen lambda) so that drawing stays cheap and
+  # there is a diagnostic sensor that can be read from a distance.
   - id: contagem_rest
     type: int
     restore_value: no
     initial_value: "-1"
-  # 29/10/2026 — pre-aviso do alarme: o autor viu o relogio branco durante uns
-  # segundos depois do 0, porque a ordem «timer.finished -> HA -> switch ->
-  # desenho» leva 1-3 s. Marcamos o instante em que faltavam <=2 s e o ecra
-  # passa a desenhar o despertador ate 8 s depois disso (ou ate o switch ligar).
-  # 29/10: o pre-aviso comecou em 2 s e o autor achou cedo — ficou em 1 s.
+  # 29/10/2026 — alarm pre-warning: the author saw the white clock for a few
+  # seconds after the 0, because the sequence «timer.finished -> HA -> switch ->
+  # drawing» takes 1-3 s. We mark the instant when <=2 s were left and the screen
+  # starts drawing the alarm clock until 8 s after that (or until the switch turns on).
+  # 29/10: the pre-warning started at 2 s and the author thought it early — it stayed at 1 s.
   - id: alarme_pre_ms
     type: uint32_t
     restore_value: no
@@ -445,79 +445,79 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
-  # Instante (millis) da ultima MUDANCA do va_state. E o que o watchdog do
-  # estado usa para saber ha quanto tempo a placa esta presa num estado de voz
-  # (ver o interval de 2 s). Sem isto so se via o sintoma: ecra em "a ouvir" ou
-  # "a falar" para sempre e motor de wake word parado, porque a guarda do motor
-  # exige va_state == 0 — visto a 25/09, 3 min 15 s preso ate se desligar da
-  # corrente (o lado HA ja tinha acabado; a pipeline fechou sem disparar o
-  # on_tts_stream_end nem o on_end).
+  # Instant (millis) of the last CHANGE of va_state. It is what the state
+  # watchdog uses to know how long the board has been stuck in a voice state
+  # (see the 2 s interval). Without this only the symptom was visible: screen on "a ouvir" or
+  # "a falar" forever and the wake word engine stopped, because the engine guard
+  # requires va_state == 0 — seen on 25/09, 3 min 15 s stuck until it was unplugged
+  # from the mains (the HA side had already finished; the pipeline closed without firing
+  # on_tts_stream_end or on_end).
   - id: va_estado_ms
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  # v0.15.15 — instante em que o HA pediu para FALAR (TTS). Fica a 0 quando o
-  # audio acabou. Serve para apanhar o estado preso em "a falar" em que a coluna
-  # nunca chega a arrancar (barramento I2S agarrado pelo motor de wake word):
+  # v0.15.15 — instant when HA asked to SPEAK (TTS). Goes back to 0 when the
+  # audio has ended. It serves to catch the state stuck at "a falar" where the speaker
+  # never gets to start (I2S bus held by the wake word engine):
   #   [E][i2s_audio.speaker:115]: Driver failed to start; retrying in 1 second
   #   [E][i2s_audio.speaker.std]: Parent bus is busy
-  # Visto a 18/10: o ecra ficava em "a falar" para sempre e o `va_state` tambem,
-  # porque o watchdog normal conta a partir da ultima MUDANCA de estado.
+  # Seen on 18/10: the screen stayed on "a falar" forever and `va_state` too,
+  # because the normal watchdog counts from the last state CHANGE.
   - id: tts_pend_ms
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  # ⚠️ Nao e decorativo: e a trava que impede o motor de wake word de agarrar o
-  # barramento I2S enquanto ha media. Com o motor a correr, a coluna faz
+  # ⚠️ Not decorative: it is the lock that stops the wake word engine from grabbing the
+  # I2S bus while there is media. With the engine running, the speaker spews
   #   [E][i2s_audio.speaker.std]: Parent bus is busy
-  # em ciclo, e a placa ENCERRA (deixou de responder ao WiFi e teve de ser
-  # desligada da corrente em 12/09). Ver a seccao do media player.
+  # in a loop, and the board SHUTS DOWN (it stopped answering WiFi and had to be
+  # unplugged on 12/09). See the media player section.
   - id: mp_playing
     type: bool
     restore_value: no
     initial_value: "false"
-  # Instante em que o media player ficou "armado" (comando aceite). Serve para
-  # destravar o caso em que nada acaba por tocar (URL morto, ou alguem a mexer
-  # no cartao do HA) — sem isto o motor de wake word ficava parado para sempre.
+  # Instant when the media player became "armed" (command accepted). It serves to
+  # release the case where nothing ends up playing (dead URL, or someone touching
+  # the HA card) — without this the wake word engine stayed stopped forever.
   - id: mp_armado_ms
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  # Volume unico da coluna, em %. O `number` (HA) e o `media_player` (cartao do
-  # HA) escrevem os DOIS no mesmo speaker — sem um valor so, divergem (o autor
-  # apanhou-os com 65% e 82% ao mesmo tempo) e o mais alto satura o ES8311.
+  # Single speaker volume, in %. The `number` (HA) and the `media_player` (HA
+  # card) BOTH write to the same speaker — without a single value they diverge (the author
+  # caught them at 65% and 82% at the same time) and the louder one saturates the ES8311.
   - id: vol_pct
     type: float
     restore_value: no
     initial_value: "75.0"
-  # Instante (millis) ate ao qual o HUD mostra o VOLUME em vez do estado de voz.
-  # E o retorno visual dos cliques no botao (ver o script vol_step): sem isto, um
-  # clique para mexer no volume nao dava sinal NENHUM quando nao ha media a tocar.
+  # Instant (millis) until which the HUD shows the VOLUME instead of the voice state.
+  # It is the visual feedback of the button clicks (see script vol_step): without this, a
+  # click to change the volume gave NO signal at all when there is no media playing.
   - id: vol_aviso_ms
     type: uint32_t
     restore_value: no
     initial_value: "0"
-  # --- MODO CONVERSA (v0.15.9) ------------------------------------------------
-  # Quantas continuacoes seguidas ja foram abertas sem wake word. Volta a 0 em
-  # cada wake word nova; o teto vem do `number` "Respostas seguidas" (conv_max).
+  # --- CONVERSATION MODE (v0.15.9) --------------------------------------------
+  # How many follow-ups in a row have already been opened without a wake word. Goes back to 0 on
+  # every new wake word; the ceiling comes from the `number` "Respostas seguidas" (conv_max).
   - id: conv_count
     type: int
     restore_value: no
     initial_value: "0"
-  # true enquanto a janela de continuacao esta ABERTA e ainda ninguem falou.
-  # Serve para o on_start distinguir "acordou com a wake word" (repõe a cadeia)
-  # de "abriu por continuacao" (nao repoe).
+  # true while the follow-up window is OPEN and nobody has spoken yet.
+  # It lets on_start tell "woke up with the wake word" (resets the chain)
+  # from "opened as a follow-up" (does not reset).
   - id: conv_espera
     type: bool
     restore_value: no
     initial_value: "false"
 
 script:
-  # --- CARA DO ROBÔ: aplica o estado ao ecrã LVGL ---------------------------------
-  #   0 espera · 1 a ouvir · 2 a pensar · 3 a falar · 4 a tocar · 5 a dormir
-  #   6 sem ligação · 7 alarme do temporizador
-  # `ui_base` repõe tudo e arranca a respiração; cada estado acrescenta as suas
-  # animações. Só corre quando o estado muda (nunca em ciclo).
+  # --- ROBOT FACE: applies the state to the LVGL screen --------------------------
+  #   0 standby · 1 listening · 2 thinking · 3 speaking · 4 playing · 5 asleep
+  #   6 no connection · 7 timer alarm
+  # `ui_base` resets everything and starts the breathing; each state adds its own
+  # animations. It only runs when the state changes (never in a loop).
   - id: ui_base
     then:
       - lambda: "id(anim_ok) = false;"
@@ -527,8 +527,8 @@ script:
            nota_a, nota_b, z_a, z_b, z_c,
            anel_1, anel_2, anel_3, olhos_saltam, led_pulsa]
       - lambda: "id(anim_ok) = true;"
-      # Cabeca e robo voltam ao sitio: parar uma animacao a meio deixava o x/y
-      # deslocados (o robo ficava fora do centro depois de tremer).
+      # Head and robot return to place: stopping an animation midway left x/y
+      # offset (the robot ended up off-centre after shaking).
       - lvgl.widget.update: {id: cabeca, transform_rotation: 0}
       - lvgl.widget.update: {id: robo, x: 0, y: 0}
       - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d, boca_sorriso, boca_corte, relogio_big, led_antena]
@@ -546,8 +546,8 @@ script:
 
   - id: ui_espera
     then:
-      # Relogio sempre no tamanho grande (pedido do autor, 29/10): nao ha troca
-      # de fonte entre estados — so a cor muda no estado de noite.
+      # Clock always at the large size (author request, 29/10): there is no font
+      # swap between states — only the colour changes in night mode.
       - lvgl.widget.hide: relogio_small
       - lvgl.widget.show: relogio_big
 
@@ -613,8 +613,8 @@ script:
     then:
       - lambda: |-
           int est = id(va_state);
-          // O alarme manda em tudo; o media só aparece fora de uma conversa
-          // (o TTS também passa pelo media player).
+          // The alarm outranks everything; media only shows outside a conversation
+          // (TTS also goes through the media player).
           if (id(alarme_tocar).state) est = 7;
           else if (id(mp_playing) && est == 0) est = 4;
           id(ecra_est) = est;
@@ -663,7 +663,7 @@ script:
                                               else:
                                                 - script.execute: ui_espera
 
-  # Piscar de olhos: tapa os olhos 110 ms e volta a abrir (só em espera).
+  # Eye blink: covers the eyes for 110 ms and opens them again (standby only).
   - id: ui_piscar
     then:
       - if:
@@ -675,14 +675,14 @@ script:
             - delay: 110ms
             - lvgl.widget.hide: [olho_fechado_e, olho_fechado_d]
             - lvgl.widget.show: [olho_e, olho_d, brilho_e, brilho_d]
-  # v0.15.17 — temporizador da Linha HUD. `mode: restart` faz cada valor novo
-  # recomecar a contagem; o update("") nao volta a armar o ciclo (o on_value
-  # so executa com texto nao vazio).
+  # v0.15.17 — HUD Line timer. `mode: restart` makes every new value
+  # restart the count; update("") does not re-arm the cycle (on_value
+  # only runs with non-empty text).
   - id: hud_linha_limpa
     mode: restart
     then:
       - delay: 45s
-      # o action deste ESPHome e `text.set` (nao `text.set_value`).
+      # this ESPHome action is `text.set` (not `text.set_value`).
       - text.set:
           id: hud_linha
           value: ""
@@ -690,31 +690,31 @@ script:
     parameters:
       state: int
     then:
-      # v0.17.12 — o antigo "cala o ecrã durante a conversa" (governar o desenho
-      # por fps, v0.15.12) saiu com o `number` Animação (fps): quem desenha é o
-      # LVGL e o custo por frame já não se governa por ali.
+      # v0.17.12 — the old "silence the screen during the conversation" (governing drawing
+      # by fps, v0.15.12) left with the `number` Animação (fps): LVGL does the drawing
+      # and the per-frame cost is no longer governed from there.
       - lambda: |-
           id(va_state) = state;
       - script.execute: {id: ui_aplica}
 
-  # Devolve o motor de wake word a escuta ASSIM QUE ELE CONSEGUIR.
-  # A coluna mantem o barramento I2S enquanto tem audio em buffer e so o larga
-  # quando o amplificador se desliga - ouve-se um estalido. Tentar arrancar o
-  # motor antes disso falha, por isso tenta-se em ciclo curto em vez de esperar
-  # um tempo fixo (que era um palpite: as vezes ficava a ouvir, outras nao).
-  # O ecra so passa a "em espera" quando o motor estiver MESMO a ouvir - antes
-  # dizia "em espera" uns segundos antes de o estar.
+  #   # Returns the wake word engine to listening AS SOON AS IT CAN.
+  # The speaker holds the I2S bus while it has audio in the buffer and only releases it
+  # when the amplifier switches off — a click is heard. Trying to start the
+  # engine before that fails, so it is retried in a short loop instead of waiting
+  # for a fixed time (which was a guess: sometimes it listened, sometimes not).
+  # The screen only switches to "em espera" when the engine is REALLY listening — before
+  # it said "em espera" a few seconds before it was.
   - id: mww_resume
     mode: restart
     then:
       - delay: 1s
-      # ⚠️ PORQUE ISTO E PRECISO: o ESPHome liga por omissao SO O PRIMEIRO modelo
-      # da lista (`default_enabled = i == 0` em micro_wake_word/__init__.py) e
-      # depois guarda o estado na flash (NVS, chave = hash do id). O ok_hermes,
-      # sendo o 2.o modelo, nasceu DESLIGADO — medido no log do painel:
+      # ⚠️ WHY THIS IS NEEDED: ESPHome enables by default ONLY THE FIRST model
+      # in the list (`default_enabled = i == 0` in micro_wake_word/__init__.py) and
+      # then saves the state to flash (NVS, key = hash of the id). ok_hermes,
+      # being the 2nd model, was born OFF — measured in the panel log:
       #   [I][mwwdiag]: motor=A CORRER | okay_nabu=on | ok_hermes=OFF
-      # Nao depender da ordem da lista nem do que ficou na flash: liga-se aqui,
-      # a cada vez que o motor volta a escuta (inclui o arranque).
+      # Do not depend on the list order or on what was left in flash: it is enabled here,
+      # every time the engine goes back to listening (boot included).
       - micro_wake_word.enable_model: {id: ww_ok_hermes}
       - micro_wake_word.enable_model: {id: ww_okay_nabu}
       - repeat:
@@ -725,8 +725,8 @@ script:
                   all:
                     - not:
                         micro_wake_word.is_running:
-                    # NUNCA com o media player a tocar: o motor agarrava o
-                    # barramento I2S e a coluna morria (ver globals/mp_playing).
+                    # NEVER with the media player playing: the engine grabbed the
+                    # I2S bus and the speaker died (see globals/mp_playing).
                     - lambda: "return !id(mp_playing);"
                 then:
                   - micro_wake_word.start:
@@ -735,12 +735,12 @@ script:
       - logger.log: "Motor de novo a escuta"
       - script.execute: {id: hud_set, state: 0}
 
-  # --- MODO CONVERSA: reabrir o microfone sem wake word ----------------------
-  # Chamado no `on_tts_stream_end` (a resposta ja saiu TODA pela coluna). Se a
-  # cadeia ainda nao chegou ao teto, abre a janela e arranca a pipeline sem
-  # wake word; se nao, devolve o motor a escuta como antes.
-  # ⚠️ O `delay` nao e decorativo: a coluna larga o barramento I2S ao desligar o
-  # amplificador e arrancar a pipeline antes disso da "Parent bus is busy".
+  # --- CONVERSATION MODE: reopen the microphone without a wake word ----------
+  # Called in `on_tts_stream_end` (the reply has already left the speaker ENTIRELY). If the
+  # chain has not reached the ceiling yet, it opens the window and starts the pipeline without
+  # a wake word; if not, it returns the engine to listening as before.
+  # ⚠️ The `delay` is not decorative: the speaker releases the I2S bus when the
+  # amplifier switches off and starting the pipeline before that gives "Parent bus is busy".
   - id: conv_followup
     mode: restart
     then:
@@ -769,11 +769,11 @@ script:
                 level: INFO
             - script.execute: {id: mww_resume}
 
-  # Fecha a janela se ninguem falar em 7 s.
-  # `conv_espera` cai no `on_stt_vad_end` (houve fala), por isso este teste
-  # sozinho ja distingue "ninguem falou" de "estamos a responder" — nao usar o
-  # `va_state` aqui: quando a janela abre o estado ainda e 0/1 e o hud_set vem
-  # depois, o que ja deixou a janela aberta para sempre na 1.a tentativa.
+  # Closes the window if nobody speaks within 7 s.
+  # `conv_espera` falls in `on_stt_vad_end` (there was speech), so this test
+  # alone already tells "nobody spoke" from "we are replying" — do not use
+  # `va_state` here: when the window opens the state is still 0/1 and hud_set comes
+  # later, which already left the window open forever on the 1st attempt.
   - id: conv_janela
     mode: restart
     then:
@@ -789,21 +789,21 @@ script:
             - voice_assistant.stop:
             - script.execute: {id: mww_resume}
 
-  # --- MEDIA PLAYER: libertar o barramento I2S -------------------------------
-  # O microfone e a coluna partilham o MESMO barramento I2S nesta placa (um so
-  # periferico, um so mutex no ESPHome) e o motor de wake word agarra-o enquanto
-  # esta a escutar. Se o media player arrancar com o motor a correr, a coluna
-  # falha:
+  # --- MEDIA PLAYER: release the I2S bus -------------------------------------
+  # The microphone and the speaker share the SAME I2S bus on this board (a single
+  # peripheral, a single mutex in ESPHome) and the wake word engine grabs it while
+  # it is listening. If the media player starts with the engine running, the speaker
+  # fails:
   #   [E][i2s_audio.speaker.std]: Parent bus is busy
   #   [E][i2s_audio.speaker:115]: Driver failed to start; retrying in 1 second
-  # ⚠️ Isto NAO se resolve com o gatilho `on_play`: esse so dispara quando a
-  # pipeline comeca MESMO a tocar (speaker_media_player.cpp: state=PLAYING), o
-  # que nunca acontece enquanto o bus estiver preso -> impasse permanente. Por
-  # isso o travamento e feito no `on_turn_on` (dispara quando o COMANDO chega,
-  # antes de a pipeline tocar) e o estado volta a OFF no `on_idle` para o
-  # proximo comando voltar a disparar. Foi este impasse que em 12/09 deixou a
-  # placa a repetir erros de bus ate deixar de responder (teve de ser desligada
-  # da corrente).
+  # ⚠️ This is NOT solved with the `on_play` trigger: that only fires when the
+  # pipeline REALLY starts playing (speaker_media_player.cpp: state=PLAYING), which
+  # which never happens while the bus is stuck -> permanent deadlock. That is
+  # why the locking is done in `on_turn_on` (it fires when the COMMAND arrives,
+  # before the pipeline plays) and the state goes back to OFF in `on_idle` so the
+  # next command fires again. It was this deadlock that on 12/09 left the
+  # board repeating bus errors until it stopped responding (it had to be unplugged
+  # from the mains).
   - id: mp_stop_wake
     then:
       - lambda: "id(mp_playing) = true; id(mp_armado_ms) = millis();"
@@ -816,12 +816,12 @@ script:
                 id: mww
             - logger.log: "Media: motor de wake word parado (bus I2S livre)"
 
-  # Fim do media: largar a trava e devolver o motor a escuta. Ao contrario do
-  # voice_assistant nao ha evento de "audio acabou" — o on_idle chega quando a
-  # pipeline para. Nunca durante uma conversa de voz (va_state == 0 = em espera).
-  # ⚠️ A condicao tem de ser a global `mp_playing`, NAO `media_player.is_idle`:
-  # o `on_idle` poe logo o player a OFF (para rearmar o on_turn_on) e o
-  # `is_idle` passaria a falso para sempre, deixando o motor morto.
+  # End of media: release the lock and return the engine to listening. Unlike the
+  # voice_assistant there is no "audio finished" event — on_idle arrives when the
+  # pipeline stops. Never during a voice conversation (va_state == 0 = idle).
+  # ⚠️ The condition must be the `mp_playing` global, NOT `media_player.is_idle`:
+  # `on_idle` immediately puts the player to OFF (to re-arm on_turn_on) and
+  # `is_idle` would then be false forever, leaving the engine dead.
   - id: mp_idle_resume
     mode: restart
     then:
@@ -834,11 +834,11 @@ script:
           then:
             - script.execute: {id: mww_resume}
 
-  # --- VOLUME PELO BOTAO (cliques de 10%) ------------------------------------
-  # Chamado pelos gestos do botao BOOT (ver o on_multi_click). Passa SEMPRE pelo
-  # `number` via make_call(), que corre o `set_action` dele: e o unico caminho
-  # que escreve no speaker E no media player e mantem `vol_pct` coerente.
-  # Escrever direto no speaker daqui deixava os tres em valores diferentes.
+  # --- VOLUME FROM THE BUTTON (10% clicks) -----------------------------------
+  # Called by the BOOT button gestures (see the on_multi_click). It ALWAYS goes through the
+  # `number` via make_call(), which runs its `set_action`: it is the only path
+  # that writes to the speaker AND to the media player and keeps `vol_pct` consistent.
+  # Writing straight to the speaker from here left the three at different values.
   - id: vol_step
     parameters:
       delta: float
@@ -852,9 +852,9 @@ script:
           call.set_value(v);
           call.perform();
 
-# --- VOLUME DA COLUNA --------------------------------------------------------
-# O speaker arranca com volume 1.0 = ganho MAXIMO no ES8311 (satura). Este
-# controlo deixa afinar o volume em tempo real pelo HA, sem regravar firmware.
+# --- SPEAKER VOLUME ----------------------------------------------------------
+# The speaker starts at volume 1.0 = MAXIMUM gain on the ES8311 (saturates). This
+# control lets the volume be tuned in real time from HA, without reflashing firmware.
 number:
   - platform: template
     name: "Volume da coluna"
@@ -866,17 +866,17 @@ number:
     max_value: 100
     step: 1
     initial_value: 75
-    # Guarda o valor entre reinícios: e ele que manda no volume da coluna. Sem
-    # isto, cada update/reboot repunha 75 e apagava a escolha do autor.
+    # Saves the value across reboots: it is the one that rules the speaker volume. Without
+    # this, every update/reboot reset it to 75 and wiped the author's choice.
     restore_value: true
     set_action:
       - speaker.volume_set:
           id: box_speaker
-          # 0-100 na interface -> vol_min..vol_max no speaker (piso audivel + teto)
+          # 0-100 on the interface -> vol_min..vol_max on the speaker (audible floor + ceiling)
           volume: !lambda "return ${vol_min} + (x / 100.0f) * (${vol_max} - ${vol_min});"
-      # Um volume so: o mesmo valor (na escala da UI) vai para o media player,
-      # que tem outro controlo no cartao do HA. Sem isto os dois divergiam e o
-      # que estivesse mais alto reescrevia o do speaker.
+      # A single volume: the same value (on the UI scale) goes to the media player,
+      # which has another control on the HA card. Without this the two diverged and
+      # whichever was louder rewrote the speaker one.
       - lambda: "id(vol_pct) = x;"
       - if:
           condition:
@@ -886,8 +886,8 @@ number:
                 id: painel_mp
                 volume: !lambda "return x / 100.0f;"
 
-# Modo conversa (v0.15.9): quantas continuacoes seguidas sem wake word.
-  # 0 = desligado (comportamento antigo: cada ordem exige a wake word).
+# Conversation mode (v0.15.9): how many follow-ups in a row without a wake word.
+  # 0 = off (old behaviour: every order requires the wake word).
   - platform: template
     name: "Respostas seguidas"
     id: conv_max
@@ -900,11 +900,11 @@ number:
     initial_value: 10
     restore_value: true
 
-# --- TITULO DO MEDIA (o que esta a tocar) ------------------------------------
-# O media player do ESPHome NAO recebe metadados do HA (nem titulo, nem estacao)
-# — a API so leva o URL. Este `text` e a ponte: o HA escreve aqui (text.set,
-# entidade "Titulo do media") e o ecra de media mostra-o. Se ninguem escrever,
-# o ecra mostra "Radio / Musica".
+# --- MEDIA TITLE (what is playing) -------------------------------------------
+# The ESPHome media player does NOT receive metadata from HA (neither title nor station)
+# — the API only carries the URL. This `text` is the bridge: HA writes here (text.set,
+# entity "Titulo do media") and the media screen shows it. If nobody writes,
+# the screen shows "Radio / Musica".
 text:
   - platform: template
     name: "Titulo do media"
@@ -916,9 +916,9 @@ text:
     max_length: 60
     initial_value: ""
 
-# --- LINHA DE HUD (escrita pelo agente via marcador [HW:/display/info:...]) ---
-# O componente `hermes` do HA extrai o marcador da resposta, chama
-# text.set_value nesta entidade e o texto NUNCA e falado. Vazia = nao desenha.
+# --- HUD LINE (written by the agent via the [HW:/display/info:...] marker) ---
+# The `hermes` component in HA extracts the marker from the reply, calls
+# text.set_value on this entity and the text is NEVER spoken. Empty = not drawn.
   - platform: template
     name: "Linha HUD"
     id: hud_linha
@@ -928,9 +928,9 @@ text:
     min_length: 0
     max_length: 60
     initial_value: ""
-    # v0.15.17 — a linha nao fica no ecra a espera de alguem a mandar tirar:
-    # 45 s depois de escrita desaparece sozinha, e uma wake word nova limpa-a
-    # logo (ver voice_assistant.on_start). Cada valor novo reinicia a contagem.
+    # v0.15.17 — the line does not stay on the screen waiting for someone to clear it:
+    # 45 s after being written it disappears by itself, and a new wake word clears it
+    # at once (see voice_assistant.on_start). Every new value restarts the count.
     on_value:
       - if:
           condition:
@@ -938,11 +938,11 @@ text:
           then:
             - script.execute: hud_linha_limpa
 
-# --- CONTAGEM DO TEMPORIZADOR (29/10/2026) -----------------------------------
-# O HA escreve aqui o **epoch UTC** (segundos) do fim do proximo temporizador;
-# o ecra calcula o que falta a cada frame e desenha por baixo do relogio, em
-# vermelho. Vazio = nao ha temporizador. E epoch e nao «X minutos» de proposito:
-# assim a contagem desce ao segundo no ecra sem o HA escrever a cada segundo.
+# --- TIMER COUNTDOWN (29/10/2026) --------------------------------------------
+# HA writes here the **UTC epoch** (seconds) of the end of the next timer;
+# the screen works out what is left on every frame and draws it under the clock, in
+# red. Empty = no timer. It is epoch and not «X minutes» on purpose:
+# that way the countdown drops by the second on screen without HA writing every second.
   - platform: template
     name: "Contagem do temporizador (fim)"
     id: contagem_fim
@@ -953,14 +953,14 @@ text:
     max_length: 12
     initial_value: ""
 
-# --- DIAGNOSTICO DO WAKE WORD (temporario) ------------------------------------
-# Mostra de 60 em 60s se o motor esta a escutar e se os modelos estao ativos.
-# "modelos OFF" = o HA enviou uma lista vazia em on_set_configuration e
-# desativou-os todos.
+# --- WAKE WORD DIAGNOSTICS (temporary) ----------------------------------------
+# Shows every 60s whether the engine is listening and whether the models are active.
+# "modelos OFF" = HA sent an empty list in on_set_configuration and
+# disabled them all.
 switch:
-  # 29/10/2026 — alarme do temporizador a tocar: o ecra troca o anel normal por
-  # um despertador animado. Ligado/desligado pelo script `temporizador_alarme`
-  # do HA; ALWAYS_OFF no arranque para nunca ficar preso ligado.
+  # 29/10/2026 — timer alarm ringing: the screen swaps the normal ring for
+  # an animated alarm clock. Turned on/off by the HA `temporizador_alarme` script;
+  # ALWAYS_OFF at boot so it never stays stuck on.
   - platform: template
     name: "Alarme a tocar"
     id: alarme_tocar
@@ -974,8 +974,8 @@ switch:
       - script.execute: {id: ui_aplica}
 
 interval:
-  # --- CONTAGEM DO TEMPORIZADOR (1 s) ---------------------------------------
-  # Piscar de olhos (so em espera). 4 s e o ritmo do mockup do Jarvis.
+  # --- TIMER COUNTDOWN (1 s) ------------------------------------------------
+  # Eye blink (idle only). 4 s is the Jarvis mockup rhythm.
   - interval: 4s
     then:
       - script.execute: ui_piscar
@@ -989,9 +989,9 @@ interval:
                      (millis() - id(alarme_ms)) > 15000;
           then:
             - switch.turn_off: alarme_tocar
-      # Cara (v0.16.0): o relogio e a contagem do temporizador sao etiquetas
-      # LVGL — atualizam-se aqui, 1x/s. O LVGL so redesenha se o texto mudar e
-      # so a area da etiqueta (uns 60x20 px), nao o ecra todo.
+      # Face (v0.16.0): the clock and the timer countdown are LVGL labels
+      # — they are updated here, 1x/s. LVGL only redraws when the text changes,
+      # and only the label area (about 60x20 px), not the whole screen.
       - lvgl.label.update:
           id: relogio_big
           text: !lambda |-
@@ -1009,26 +1009,26 @@ interval:
       - lvgl.label.update:
           id: temporizador
           text: !lambda |-
-            // contagem_rest e recalculado aqui no lambda de baixo; usamos o
-            // valor do tique anterior (1 s de atraso maximo, invisivel).
+            // contagem_rest is recalculated in the lambda below; we use the
+            // value from the previous tick (1 s delay at most, invisible).
             int r = id(contagem_rest);
             if (r < 0) return std::string("");
             char b[16];
             if (r >= 3600) snprintf(b, sizeof(b), "%d:%02d:%02d", r / 3600, (r % 3600) / 60, r % 60);
             else           snprintf(b, sizeof(b), "%d:%02d", (r / 60) % 60, r % 60);
             return std::string(b);
-      # Relogio: SEMPRE o tamanho grande (pedido do autor, 29/10). O `relogio_small`
-      # fica escondido para sempre; a troca de fonte por estado saiu.
+      # Clock: ALWAYS the big size (the author asked for it, 29/10). The `relogio_small`
+      # stays hidden for good; the per-state font swap is gone.
       - lvgl.widget.show: relogio_big
       - lvgl.widget.hide: relogio_small
-      # Legenda do peito, por prioridade (v0.17.14 — opcao (a) do autor):
-      #   1) a linha escrita pelo agente (`hud_linha`, vive 45 s) ocupa a legenda
-      #      e devolve-a ao estado quando desaparece — sem widget novo, no sitio
-      #      que ja se olha;
-      #   2) o titulo do media, a rolar;
-      #   3) a legenda do estado (o mesmo texto que os `ui_*` escrevem: aqui so
-      #      serve para a repor quando a linha HUD se apaga ou o media para).
-      # O alarme manda sempre: `ui_alarme` escreve "ALARME" a vermelho.
+      # Chest caption, by priority (v0.17.14 — the author's option (a)):
+      #   1) the line written by the agent (`hud_linha`, lives 45 s) takes the caption
+      #      and gives it back to the state when it disappears — no new widget, in the
+      #      place people already look at;
+      #   2) the media title, scrolling;
+      #   3) the state caption (the same text the `ui_*` write: here it only
+      #      serves to restore it when the HUD line clears or the media stops).
+      # The alarm always wins: `ui_alarme` writes "ALARME" in red.
       - if:
           condition:
             lambda: "return !id(hud_linha).state.empty() && !id(alarme_tocar).state;"
@@ -1046,8 +1046,8 @@ interval:
                       id: legenda
                       text: !lambda |-
                         std::string t = id(mp_titulo).state;
-                        // Nome da rádio/faixa, a rolar no peito (long_mode:
-                        // SCROLL_CIRCULAR). Sem título, fica "A TOCAR".
+                        // Station/track name, scrolling on the chest (long_mode:
+                        // SCROLL_CIRCULAR). With no title it stays "A TOCAR".
                         if (t.empty()) return std::string("A TOCAR");
                         return t;
             - if:
@@ -1094,31 +1094,31 @@ interval:
             dbg_ativo = false;
           }
 
-  # --- WATCHDOG DO MEDIA (2 s) ----------------------------------------------
-  # Le so globais (barato) e cobre os caminhos que o gatilho do media player
-  # NAO apanha.
+  # --- MEDIA WATCHDOG (2 s) -------------------------------------------------
+  # Reads globals only (cheap) and covers the paths that the media player trigger
+  # does NOT catch.
   - interval: 2s
     then:
-      # (1) O motor de wake word nunca pode estar a correr com media armado:
-      #     agarra o barramento I2S e a coluna fica a repetir "bus is busy".
+      # (1) The wake word engine must never be running with media armed:
+      #     it grabs the I2S bus and the speaker keeps repeating "bus is busy".
       - if:
           condition:
             all:
               - micro_wake_word.is_running:
-              # v0.15.15: tambem com a voz em curso (a pensar 2 / a falar 3).
-              # O `on_start` da pipeline ja para o motor, mas um `mww_resume`
-              # atrasado (do turno anterior) voltava a po-lo a correr a meio e a
-              # coluna ficava a repetir "Parent bus is busy" para sempre.
+              # v0.15.15: also with the voice in progress (thinking 2 / speaking 3).
+              # The pipeline `on_start` already stops the engine, but a delayed
+              # `mww_resume` (from the previous turn) set it running again mid-way and the
+              # speaker kept repeating "Parent bus is busy" forever.
               - any:
                   - lambda: "return id(mp_playing);"
                   - lambda: "return id(va_state) == 2 || id(va_state) == 3;"
           then:
             - micro_wake_word.stop:
                 id: mww
-      # (1b) v0.15.15 — "A FALAR" SEM SOM: o HA pediu TTS mas a coluna nunca
-      #      arrancou (I2S agarrado). Sem isto o ecra e o va_state ficam em 3
-      #      para sempre e o watchdog normal nunca dispara (conta a partir da
-      #      ultima MUDANCA de estado).
+      # (1b) v0.15.15 — "SPEAKING" WITH NO SOUND: HA asked for TTS but the speaker never
+      #      started (I2S grabbed). Without this the screen and va_state stay at 3
+      #      forever and the normal watchdog never fires (it counts from the
+      #      last state CHANGE).
       - if:
           condition:
             all:
@@ -1133,9 +1133,9 @@ interval:
                 id: mww
             - script.execute: {id: hud_set, state: 0}
             - script.execute: {id: mww_resume}
-      # (2) Destravar: armado ha mais de 10 s sem nada a tocar nem a anunciar
-      #     (comando aceite mas a pipeline nunca arrancou: URL morto, ou alguem
-      #     a mexer no cartao do HA). Sem isto a wake word nunca voltava.
+      # (2) Release: armed for more than 10 s with nothing playing or announcing
+      #     (command accepted but the pipeline never started: dead URL, or someone
+      #     messing with the HA card). Without this the wake word never came back.
       - if:
           condition:
             all:
@@ -1150,14 +1150,14 @@ interval:
             - media_player.turn_off:
                 id: painel_mp
             - script.execute: {id: mww_resume}
-      # (3) Volume: manda o `number` (fonte da verdade, guardado entre reinicios).
-      #     Aqui so se EMPURRA esse valor para o media player, para o cartao do HA
-      #     nao mostrar outra coisa. O sentido inverso (mexer no cartao) e apanhado
-      #     pelo `on_volume` — sem sondagem e sem luta entre os dois.
-      #     ⚠️ Nao voltar a "adoptar" o volume do media player aqui: o componente
-      #     DESCARTA sets de volume quando a fila esta cheia (`xQueueSend(..., 0)`,
-      #     "volume sets aren't that important!"), logo o valor dele fica preso num
-      #     valor antigo e o number saltava de volta (visto: number preso a 90/100).
+      # (3) Volume: the `number` is in charge (source of truth, saved across reboots).
+      #     Here that value is only PUSHED to the media player, so the HA card
+      #     does not show something else. The reverse direction (touching the card) is caught
+      #     by `on_volume` — with no polling and no fight between the two.
+      #     ⚠️ Do not go back to "adopting" the media player volume here: the component
+      #     DISCARDS volume sets when the queue is full (`xQueueSend(..., 0)`,
+      #     "volume sets aren't that important!"), so its value gets stuck at an
+      #     old value and the number jumped back (seen: number stuck at 90/100).
       - if:
           condition:
             lambda: "return fabsf(id(vol_pct) / 100.0f - id(painel_mp).volume) >= 0.02f;"
@@ -1166,29 +1166,29 @@ interval:
                 id: painel_mp
                 volume: !lambda "return id(vol_pct) / 100.0f;"
 
-  # (4) WATCHDOG DO ESTADO DE VOZ (25/09) — o va_state pode ficar PRESO.
-      #     Medido a 25/09: depois de varios testes seguidos de wake word, o ecra
-      #     ficou em "a ouvir" e nunca mais saiu; o lado HA tinha acabado bem
-      #     (satelite idle, media off) mas o firmware nao recebeu o
-      #     on_tts_stream_end nem o on_end, logo:
-      #       - o ecra ficava em "a ouvir"/"a falar" para sempre;
-      #       - a guarda (3) NUNCA devolvia o motor a escuta, porque exige
-      #         va_state == 0 -> painel SURDO ate se desligar da corrente
-      #         (3 min 15 s, ate o autor cortar a alimentacao).
-      #     Aqui carimba-se o instante de cada mudanca de estado...
+  # (4) VOICE STATE WATCHDOG (25/09) — va_state can get STUCK.
+      #     Measured on 25/09: after several wake word tests in a row, the screen
+      #     stayed on "a ouvir" and never left again; the HA side had finished fine
+      #     (satellite idle, media off) but the firmware did not receive
+      #     on_tts_stream_end or on_end, so:
+      #       - the screen stayed on "a ouvir"/"a falar" forever;
+      #       - guard (3) NEVER returned the engine to listening, because it requires
+      #         va_state == 0 -> panel DEAF until unplugged from the mains
+      #         (3 min 15 s, until the author cut the power).
+      #     Here the instant of every state change is stamped...
       - lambda: |-
           static int est_ant = -1;
           if (id(va_state) != est_ant) {
             est_ant = id(va_state);
             id(va_estado_ms) = millis();
           }
-      #     ...e repoe-se "em espera" quando um estado se aguenta demasiado tempo
-      #     SEM nada a tocar. Limites por estado (nunca abaixo do tempo legitimo
-      #     da fase: uma resposta do Hermes pode levar dezenas de segundos):
-      #       1 = a ouvir    -> 45 s   (a fase de escuta e curta)
-      #       2 = a pensar   -> 180 s  (o plugin da voz espera ate 140 s)
-      #       3 = a falar    -> 90 s   (com media a tocar, nunca dispara)
-      #       4 = erro       -> 15 s   (aviso visual; a placa tem de voltar)
+      #     ...and "em espera" is restored when a state holds for too long
+      #     WITH nothing playing. Limits per state (never below the legitimate time
+      #     of the phase: a Hermes reply can take tens of seconds):
+      #       1 = a ouvir    -> 45 s   (the listening phase is short)
+      #       2 = a pensar   -> 180 s  (the voice plugin waits up to 140 s)
+      #       3 = a falar    -> 90 s   (with media playing, never fires)
+      #       4 = erro       -> 15 s   (visual warning; the board has to come back)
       - if:
           condition:
             all:
@@ -1198,8 +1198,8 @@ interval:
                                   : (id(va_state) == 2) ? 180000
                                   : (id(va_state) == 4) ? 15000 : 90000;
                   return (millis() - id(va_estado_ms)) > limite;
-              # Com media A TOCAR (ou um anuncio) nada disto se aplica: e uma
-              # fase legitima e mexer no motor agora agarrava o barramento I2S.
+              # With media PLAYING (or an announcement) none of this applies: it is a
+              # legitimate phase and touching the engine now would grab the I2S bus.
               - not:
                   media_player.is_playing: painel_mp
               - not:
@@ -1215,9 +1215,9 @@ interval:
 
   - interval: 60s
     then:
-      # Se o media player esta a tocar, o motor TEM de estar parado (o
-      # barramento I2S e um so). Cobre qualquer caminho que tenha voltado a
-      # arrancar o motor a meio de um media.
+      # If the media player is playing, the engine HAS to be stopped (the
+      # I2S bus is a single one). It covers any path that set the engine
+      # running again in the middle of media.
       - if:
           condition:
             lambda: "return id(mp_playing);"
@@ -1225,10 +1225,10 @@ interval:
             - logger.log: "mwwdiag: media a tocar -> motor parado"
             - micro_wake_word.stop:
                 id: mww
-      # Rede de seguranca do inverso: se um comando de media morreu sem chegar a
-      # tocar (URL invalido, source em baixo), a trava ficaria presa em true e a
-      # wake word nunca mais voltava. Destrava aqui.
-      # ⚠️ Nao usar `media_player.is_idle`: o on_idle poe logo o player a OFF.
+      # Safety net for the reverse: if a media command died without ever
+      # playing (invalid URL, source down), the lock would stay stuck at true and the
+      # wake word would never come back. It releases here.
+      # ⚠️ Do not use `media_player.is_idle`: on_idle immediately puts the player to OFF.
       - if:
           condition:
             all:
@@ -1241,19 +1241,19 @@ interval:
             - logger.log: "mwwdiag: media morreu sem tocar -> a destravar"
             - lambda: "id(mp_playing) = false;"
             - script.execute: {id: mww_resume}
-      # Rede de seguranca: se o motor ficar parado (arranque falhado, ou um
-      # stop inesperado), volta a po-lo a escuta. Sem guarda de
-      # voice_assistant.is_running (fica verdadeira ~1,5 min depois da
-      # conversa e bloqueava isto). O caminho normal e o on_end; isto so
-      # dispara se algo correr mal.
+      # Safety net: if the engine stays stopped (failed start, or an unexpected
+      # stop), put it back to listening. Without a
+      # voice_assistant.is_running guard (it stays true ~1.5 min after the
+      # conversation and would block this). The normal path is on_end; this only
+      # fires if something goes wrong.
       - if:
           condition:
             all:
               - not:
                   micro_wake_word.is_running:
-              # NUNCA durante uma conversa: o motor agarra o barramento I2S a
-              # meio da resposta e a coluna fica sem conseguir arrancar
-              # (silencio). va_state == 0 significa "em espera".
+              # NEVER during a conversation: the engine grabs the I2S bus in the
+              # middle of the reply and the speaker cannot start
+              # (silence). va_state == 0 means "em espera".
               - lambda: "return id(va_state) == 0;"
               - lambda: "return !id(mp_playing);"
           then:
@@ -1266,11 +1266,11 @@ interval:
                    id(ww_okay_nabu).is_enabled() ? "on" : "OFF",
                    id(ww_ok_hermes).is_enabled() ? "on" : "OFF",
                    id(va_state), (unsigned) (millis() - id(va_estado_ms)));
-      # Rede de seguranca: o HA tem o poder de os desligar TODOS
-      # (`VoiceAssistant::on_set_configuration()` faz disable() a cada modelo e
-      # so reativa os ids que a lista dele tiver — e aqui a lista dele anda
-      # vazia: os selects "Palavra de despertar" mostram so no_wake_word).
-      # Se algum aparecer desligado, volta a ligar-se.
+      # Safety net: HA has the power to turn them ALL off
+      # (`VoiceAssistant::on_set_configuration()` calls disable() on every model and
+      # only re-enables the ids its list has — and here its list is
+      # empty: the "Palavra de despertar" selects only show no_wake_word).
+      # If any turns up off, it switches itself back on.
       - if:
           condition:
             or:
@@ -1283,9 +1283,9 @@ interval:
             - micro_wake_word.enable_model: {id: ww_ok_hermes}
             - micro_wake_word.enable_model: {id: ww_okay_nabu}
 
-# --- BATERIA -----------------------------------------------------------------
-# Esta placa le a bateria por ADC no GPIO6 com divisor 1:1 (multiply 2.0),
-# igual ao config oficial do fabricante (spotpear-tv_hw.yaml).
+# --- BATTERY -----------------------------------------------------------------
+# This board reads the battery through the ADC on GPIO6 with a 1:1 divider (multiply 2.0),
+# the same as the manufacturer's official config (spotpear-tv_hw.yaml).
 sensor:
   - platform: adc
     pin: GPIO6
@@ -1320,8 +1320,8 @@ sensor:
       if (pct > 100.0f) pct = 100.0f;
       return pct;
 
-  # Tensao do USB (GPIO7) — ver o comentario do binary_sensor "Carregador
-  # ligado". E a unica forma de o firmware saber que o carregador esta ligado.
+  # USB voltage (GPIO7) — see the comment on the binary_sensor "Carregador ligado"
+  # (charger plugged in). It is the only way the firmware knows the charger is connected.
   - platform: adc
     pin: GPIO7
     id: usb_voltage
@@ -1332,24 +1332,24 @@ sensor:
     unit_of_measurement: "V"
     icon: "mdi:usb"
     filters:
-      - multiply: 1.6667   # (20K + 30K) / 30K — o divisor R59/R61
+      - multiply: 1.6667   # (20K + 30K) / 30K — the R59/R61 divider
       - median:
           window_size: 5
           send_every: 5
           send_first_at: 1
       - throttle: 1min
 
-  # Tempo desde o arranque. Serve para CONFIRMAR reinicios inesperados: em
-  # 12/09 a placa reiniciou sozinha as 20:44 sem registo de crash no arranque
-  # seguinte (suspeita de brownout ao arrancar a coluna). Sem isto nao havia
-  # como datar o proximo.
+  # Time since boot. It serves to CONFIRM unexpected reboots: on
+  # 12/09 the board rebooted by itself at 20:44 with no crash record at the
+  # next boot (suspected brownout when starting the speaker). Without this there was no
+  # way to date the next one.
   - platform: uptime
     id: uptime_s
     name: "Uptime"
     type: seconds
     update_interval: 60s
 
-# --- BARREMENTOS -------------------------------------------------------------
+# --- SEPARATORS --------------------------------------------------------------
 i2c:
   - id: bus_a
     sda: GPIO15
@@ -1367,8 +1367,8 @@ i2s_audio:
     i2s_bclk_pin: GPIO9
     i2s_mclk_pin: GPIO16
 
-# --- ÁUDIO (2 codecs separados) ----------------------------------------------
-# Mics = ES7210 (ADC) · Coluna = ES8311 (DAC)
+# --- AUDIO (2 separate codecs) -----------------------------------------------
+# Mics = ES7210 (ADC) · Speaker = ES8311 (DAC)
 audio_adc:
   - platform: es7210
     id: es7210_adc
@@ -1401,9 +1401,9 @@ speaker:
     i2s_dout_pin: GPIO8
     dac_type: external
     audio_dac: es8311_dac
-    # TEM de bater certo com o sample_rate do codec es8311 (16000) e com o
-    # microfone/barramento I2S. Estava 48000 enquanto o DAC estava a 16000 ->
-    # o DAC interpretava mal o relogio e saia "ruido estranho" pela coluna.
+    # It HAS to match the sample_rate of the es8311 codec (16000) and the
+    # microphone/I2S bus. It was 48000 while the DAC was at 16000 ->
+    # the DAC misread the clock and "strange noise" came out of the speaker.
     sample_rate: 16000
     channel: mono
 
@@ -1411,33 +1411,33 @@ rtttl:
   speaker: box_speaker
   gain: 0.5
 
-# --- MEDIA PLAYER (coluna do painel) ------------------------------------------
-# Da ao HA uma entidade media_player para tocar audio na coluna do painel:
-# anuncios/TTS, musica, radio. Sem isto, a coluna so existe dentro do
-# voice_assistant e nao ha como lhe mandar nada de fora.
+# --- MEDIA PLAYER (panel speaker) ---------------------------------------------
+# Gives HA a media_player entity to play audio on the panel speaker:
+# announcements/TTS, music, radio. Without this, the speaker only exists inside the
+# voice_assistant and there is no way to send it anything from outside.
 #
-# ⚠️ FORMATO: WAV / 16000 Hz / mono — exatamente a taxa em que o codec ES8311 e
-# todo o caminho de voz estao afinados. NAO copiar o FLAC 48 kHz do config
-# oficial do fabricante: aquela montagem tem resamplers e o barramento a 48 kHz,
-# e aqui a coluna e o DAC trabalham a 16000.
+# ⚠️ FORMAT: WAV / 16000 Hz / mono — exactly the rate at which the ES8311 codec and
+# the whole voice path are tuned. Do NOT copy the 48 kHz FLAC from the manufacturer's
+# official config: that setup has resamplers and the bus at 48 kHz,
+# and here the speaker and the DAC run at 16000.
 #
-# ⚠️ Declarar a taxa ERRADA aqui NAO estraga a voz (ao contrario do que estava
-# escrito no PROXIMOS-PASSOS.md). Verificado no codigo do HA 2026.9.2
-# (components/esphome/assist_satellite.py, handle_pipeline_start): o formato do
-# TTS pedido a pipeline so vem do media player quando o dispositivo NAO declara
-# a feature SPEAKER. Esta placa tem `voice_assistant: speaker: box_speaker` ->
-# `get_feature_flags()` em voice_assistant.h poe FEATURE_SPEAKER e o TTS fica
-# FIXO em wav/16000/1/2 bytes. O aviso so se aplicaria se trocassemos o
-# `speaker:` do voice_assistant por `media_player:` (sao mutuamente exclusivos,
-# cv.Exclusive). Nao trocar sem necessidade.
+# ⚠️ Declaring the WRONG rate here does NOT break the voice (contrary to what was
+# written in PROXIMOS-PASSOS.md). Verified in the HA 2026.9.2 code
+# (components/esphome/assist_satellite.py, handle_pipeline_start): the format of the
+# TTS requested from the pipeline only comes from the media player when the device does NOT declare
+# the SPEAKER feature. This board has `voice_assistant: speaker: box_speaker` ->
+# `get_feature_flags()` in voice_assistant.h sets FEATURE_SPEAKER and the TTS stays
+# FIXED at wav/16000/1/2 bytes. The warning would only apply if we swapped
+# the voice_assistant `speaker:` for `media_player:` (they are mutually exclusive,
+# cv.Exclusive). Do not swap without need.
 #
-# Uma so pipeline (announcement_pipeline): sem `media_pipeline` o componente
-# entra em modo single_pipeline_() e reutiliza o formato do anuncio tambem para
-# o proposito "default" (speaker_media_player.cpp, get_traits) — ou seja, TUDO o
-# que o HA mandar (anuncio ou musica) e transcodificado para WAV 16 kHz mono.
-# Nao precisa de mixer nem de resamplers: esses so sao necessarios quando ha
-# DUAS pipelines (anuncio + media), que o componente obriga a ter colunas
-# diferentes.
+# A single pipeline (announcement_pipeline): without `media_pipeline` the component
+# enters single_pipeline_() mode and reuses the announcement format also for
+# the "default" purpose (speaker_media_player.cpp, get_traits) — that is, EVERYTHING
+# HA sends (announcement or music) is transcoded to WAV 16 kHz mono.
+# No mixer or resamplers needed: those are only required when there are
+# TWO pipelines (announcement + media), which makes the component require different
+# speakers.
 media_player:
   - platform: speaker
     id: painel_mp
@@ -1448,27 +1448,27 @@ media_player:
       sample_rate: 16000
       num_channels: 1
       speaker: box_speaker
-    # Tem de bater com o volume que o on_boot poe no speaker (75% = 0 dB no
-    # ES8311). O setup deste componente corre ANTES do on_boot (-100) e escreve
-    # o volume dele no speaker; se ficasse no default (50%) o valor no HA dizia
-    # uma coisa e a coluna estava noutra.
+    # Has to match the volume that on_boot sets on the speaker (75% = 0 dB on the
+    # ES8311). This component's setup runs BEFORE on_boot (-100) and writes
+    # its volume to the speaker; if it stayed at the default (50%) the value in HA would say
+    # one thing and the speaker would be at another.
     volume_initial: ${vol_default}%
-    # PISO: 0% nao e silencio — e o vol_min (o mais baixo que se ouve). Sem isto
-    # o curso uteis ficava todo em cima e a metade de baixo era deserto.
+    # FLOOR: 0% is not silence — it is vol_min (the lowest that can be heard). Without this
+    # the useful range sat all at the top and the bottom half was dead.
     volume_min: ${vol_min}
-    # TETO: 100% no controlo = ${vol_max} no speaker. Com 100% aqui, o slider do
-    # cartao do HA ia buscar o ganho maximo do ES8311 e distorcia tudo.
+    # CEILING: 100% on the control = ${vol_max} on the speaker. With 100% here, the HA card
+    # slider fetched the ES8311 maximum gain and distorted everything.
     volume_max: ${vol_max}
-    # ⚠️ O GATILHO TEM DE SER O `on_turn_on`, NAO o `on_play`/`on_announcement`.
-    # O `on_play` so dispara quando a pipeline ja esta a tocar — e com o motor de
-    # wake word a segurar o barramento I2S a pipeline NUNCA chega a tocar, logo
-    # o gatilho nunca dispara e a placa fica presa a repetir "Parent bus is
-    # busy" ate encravar. O `on_turn_on` dispara no instante em que o COMANDO
-    # chega (speaker_media_player.cpp, watch_media_commands_: OFF -> ON e
-    # publish_state antes de arrancar a pipeline), que e cedo o suficiente para
-    # o motor largar o bus. O `on_idle` devolve o estado a OFF para o proximo
-    # comando voltar a disparar. Os `on_play`/`on_announcement` ficam como
-    # reforco (idempotente: mp_stop_wake so para o motor se estiver a correr).
+    # ⚠️ THE TRIGGER HAS TO BE `on_turn_on`, NOT `on_play`/`on_announcement`.
+    # `on_play` only fires when the pipeline is already playing — and with the wake word
+    # engine holding the I2S bus the pipeline NEVER gets to play, so
+    # the trigger never fires and the board stays stuck repeating "Parent bus is
+    # busy" until it locks up. `on_turn_on` fires the instant the COMMAND
+    # arrives (speaker_media_player.cpp, watch_media_commands_: OFF -> ON and
+    # publish_state before starting the pipeline), which is early enough for
+    # the engine to release the bus. `on_idle` returns the state to OFF so the next
+    # command fires again. `on_play`/`on_announcement` stay as a
+    # reinforcement (idempotent: mp_stop_wake only stops the engine if it is running).
     on_turn_on:
       - logger.log: "Media: comando recebido -> a libertar o bus I2S"
       - script.execute: {id: mp_stop_wake}
@@ -1481,29 +1481,29 @@ media_player:
       - lambda: "id(mp_playing) = false;"
       - script.execute: {id: mp_idle_resume}
       - script.execute: {id: ui_aplica}
-      # Volta a OFF para rearmar o on_turn_on. OFF no HA e normal neste
-      # componente: nao impede play_media/anuncios (ver media_player.h,
+      # Goes back to OFF to re-arm on_turn_on. OFF in HA is normal on this
+      # component: it does not prevent play_media/announcements (see media_player.h,
       # USE_SPEAKER_MEDIA_PLAYER_ON_OFF).
       - media_player.turn_off: painel_mp
-    # Volume mexido no CARTAO do HA (ou por volume_up/down): o media player ja
-    # escreveu o valor no speaker; aqui so se espelha no `number`, para os dois
-    # controlos e a barra do ecra dizerem o mesmo. E por evento (nao por
-    # sondagem) de proposito: foi a sondagem que criou a luta em que o number
-    # saltava de volta porque o media player DESCARTA sets com a fila cheia.
+    # Volume changed on the HA CARD (or by volume_up/down): the media player has already
+    # written the value to the speaker; here it is only mirrored in the `number`, so both
+    # controls and the screen bar say the same. It is event-driven (not by
+    # polling) on purpose: it was the polling that created the fight where the number
+    # jumped back because the media player DISCARDS sets with a full queue.
     on_volume:
       - lambda: |-
           ESP_LOGD("mpvol", "media player: volume=%.3f (number dizia %.0f%%)", x, id(vol_pct));
           id(vol_pct) = x * 100.0f;
           id(vol_speaker).publish_state(id(vol_pct));
 
-# NOTA (v0.14.0): aqui estava o switch "Speaker Enabled" (template,
-# `restore_mode: RESTORE_DEFAULT_ON`). No arranque disparava `speaker.mute_off`
-# — uma escrita no MESMO barramento I2S que o motor de wake word e a coluna, e
-# so servia para duplicar o que o `number` "Volume da coluna" ja faz. Nao era
-# referido por nenhuma automacao/cartao do HA. Removido (era o ponto 4 da lista
-# de limpeza do PROXIMOS-PASSOS).
+# NOTE (v0.14.0): the "Speaker Enabled" switch used to live here (template,
+# `restore_mode: RESTORE_DEFAULT_ON`). At boot it fired `speaker.mute_off`
+# — a write on the SAME I2S bus as the wake word engine and the speaker, and
+# it only duplicated what the `number` "Volume da coluna" already does. It was not
+# referenced by any HA automation/card. Removed (it was item 4 of the
+# PROXIMOS-PASSOS cleanup list).
 
-# --- BACKLIGHT (GPIO42) — sem isto o painel fica apagado ---------------------
+# --- BACKLIGHT (GPIO42) — without this the panel stays dark ------------------
 output:
   - platform: ledc
     pin: GPIO42
@@ -1519,73 +1519,73 @@ light:
     restore_mode: ALWAYS_ON
     default_transition_length: 250ms
 
-# --- ASSISTENTE DE VOZ -------------------------------------------------------
+# --- VOICE ASSISTANT ---------------------------------------------------------
 micro_wake_word:
   id: mww
-  # true (omissao do ESPHome): o motor para assim que deteta a wake word, o
-  # que LIBERTA O BARRAMENTO I2S para a coluna. Sem isto o motor segurava o
-  # bus durante a conversa e o speaker falhava:
+  # true (ESPHome default): the engine stops as soon as it detects the wake word, which
+  # FREES THE I2S BUS for the speaker. Without this the engine held the
+  # bus during the conversation and the speaker failed:
   #   [E][i2s_audio.speaker.std]: Parent bus is busy
   #   [E][voice_assistant]: Cannot receive audio, buffer is full
-  # Quem o volta a arrancar e o on_end do voice_assistant (mais abaixo).
+  # Whoever restarts it is the voice_assistant on_end (further below).
   stop_after_detection: true
-  # Modelos iguais aos do config oficial do fabricante para esta placa
-  # (Spotpear_TV.yaml). O autor testou na app do HA e o "Okay Nabu" e o que
-  # funciona melhor com o sotaque dele. Bare names = repositorio oficial
-  # github.com/esphome/micro-wake-word-models (models/v2/<nome>.json).
+  # Models the same as the manufacturer's official config for this board
+  # (Spotpear_TV.yaml). The author tested in the HA app and "Okay Nabu" is what
+  # works best with his accent. Bare names = official repository
+  # github.com/esphome/micro-wake-word-models (models/v2/<name>.json).
   models:
     - model: okay_nabu
       id: ww_okay_nabu
-      # 0.97 (default do modelo) -> 0.90 (12/09) -> 0.93 (17/09).
-      # 0.90 era sensivel de mais: em 17/09, com a TV ligada, o painel acordou
-      # SOZINHO duas vezes (16:30 e 16:47) e mandou ao Hermes transcricoes de
-      # fala da TV ("e o seu programa interno.", "Aqui. Você está me vendo?").
-      # O modelo e treinado em ingles (trained_languages: [en]); 0.97 era
-      # exigente demais para o sotaque pt-PT, mas 0.90 dispara com fala
-      # ambiente. 0.93 e o meio. Se voltar a disparar sozinho, subir mais
-      # (0.95) ou treinar um modelo com a voz do autor.
+      # 0.97 (model default) -> 0.90 (12/09) -> 0.93 (17/09).
+      # 0.90 was too sensitive: on 17/09, with the TV on, the panel woke
+      # BY ITSELF twice (16:30 and 16:47) and sent Hermes transcriptions of
+      # TV speech ("e o seu programa interno.", "Aqui. Você está me vendo?").
+      # The model is trained in English (trained_languages: [en]); 0.97 was
+      # too demanding for the pt-PT accent, but 0.90 fires on background
+      # speech. 0.93 is the middle. If it starts firing by itself again, raise it further
+      # (0.95) or train a model with the author's voice.
       probability_cutoff: 0.93
-    # --- "Ok Hermes" PROPRIO (25/09) ---------------------------------------
-    # Modelo treinado em pt no microwakeword.com que o autor trouxe (ok_hermes.zip).
-    # Ficheiros locais, nesta pasta: o `.json` e o manifesto e aponta para
-    # `./ok_hermes.tflite` (tem de ficar ao lado, com este nome). Verificado antes
-    # de instalar: TFLite INT8 com entrada [1,3,40] e saida [1,1] — a assinatura
-    # do microWakeWord v2, que e a UNICA familia que corre nesta placa (nada de
-    # `.pmdl`/`.onnx`/ESP-SR). md5 do tflite: 25eeaea2cf8a3a8492bf3b4016de0993.
-    # Fica AO LADO do okay_nabu: este e o modelo dedicado, o outro (0.93) ja
-    # dispara em "okay hermes" e serve de rede de seguranca.
+    # --- CUSTOM "Ok Hermes" (25/09) ----------------------------------------
+    # Model trained in pt on microwakeword.com that the author brought (ok_hermes.zip).
+    # Local files, in this folder: the `.json` is the manifest and points to
+    # `./ok_hermes.tflite` (it has to sit next to it, with this name). Verified before
+    # installing: INT8 TFLite with input [1,3,40] and output [1,1] — the signature
+    # of microWakeWord v2, which is the ONLY family that runs on this board (no
+    # `.pmdl`/`.onnx`/ESP-SR). md5 of the tflite: 25eeaea2cf8a3a8492bf3b4016de0993.
+    # It sits NEXT TO okay_nabu: this is the dedicated model, the other one (0.93) already
+    # fires on "okay hermes" and serves as a safety net.
     - model: models/ok_hermes.json
       id: ww_ok_hermes
-      # 0.50 = valor entregue pelo treino. NAO mexer antes de medir no sensor
-      # "Ultima wake word" (diz o modelo e a hora de cada disparo). Subir se
-      # acordar sozinho com a TV/fala ambiente — com o okay_nabu a 0.90 isso
-      # aconteceu 3x em 17/09, e a 0.93 parou.
-      # 26/09/2026: MEDIDO EM FALHA na TV ligada — a 0.50 o painel acordou ~20x
-      # numa tarde (13:38-19:32), todas com fala de TV ("...coracao cremoso de
-      # Nutella...", "...voce realmente quer que eu faca isso?"), quase todas a
-      # responder "Nao percebi". O okay_nabu (0.93) nao disparou UMA vez no mesmo
-      # periodo. 0.50 -> 0.90 = ao nivel do que se provou seguro.
-      # Se voltar a disparar sozinho, o passo seguinte e REMOVER este modelo: o
-      # okay_nabu so ja cobre "okay nabu" e "okay hermes".
+      # 0.50 = value delivered by the training. Do NOT touch before measuring on the
+      # "Ultima wake word" sensor (it reports the model and the time of every trigger). Raise it if
+      # it wakes by itself with the TV/background speech — with okay_nabu at 0.90 that
+      # happened 3x on 17/09, and at 0.93 it stopped.
+      # 26/09/2026: MEASURED FAILING with the TV on — at 0.50 the panel woke ~20x
+      # in one afternoon (13:38-19:32), all with TV speech ("...coracao cremoso de
+      # Nutella...", "...voce realmente quer que eu faca isso?"), almost all of them
+      # answering "Nao percebi". The okay_nabu (0.93) did not fire ONCE in the same
+      # period. 0.50 -> 0.90 = at the level of what proved safe.
+      # If it starts firing by itself again, the next step is to REMOVE this model: the
+      # okay_nabu alone already covers "okay nabu" and "okay hermes".
       probability_cutoff: 0.9
-    # SO este modelo (17/09). Medido no sensor "Ultima wake word":
-    #   "okay nabu"   -> dispara (5 estrelas, autor)
-    #   "okay hermes" -> dispara TAMBEM, por este modelo (frase proxima)
-    #   "hey nabu"    -> nao dispara
-    #   "hey hermes"  -> nao dispara (o modelo hey_hermes EN, miketomkins,
-    #                    v1.0.0, foi testado e removido: nao responde a voz
-    #                    do autor, ocupava arena e tinha cutoff 0.32)
-    # Os dois wake words que o autor usa estao portanto cobertos por aqui.
-    # Custo: esta sensibilidade (0.93) tambem aceita fala de TV -> 17/09
-    # disparou sozinho 3x. Se voltar a acontecer, o caminho certo e treinar
-    # um modelo com a voz dele (microwakeword.com), nao apertar o cutoff.
+    # ONLY this model (17/09). Measured on the "Ultima wake word" sensor:
+    #   "okay nabu"   -> fires (5 stars, author)
+    #   "okay hermes" -> ALSO fires, through this model (close phrase)
+    #   "hey nabu"    -> does not fire
+    #   "hey hermes"  -> does not fire (the EN hey_hermes model, miketomkins,
+    #                    v1.0.0, was tested and removed: it does not answer the
+    #                    author's voice, took up arena and had cutoff 0.32)
+    # The two wake words the author uses are therefore covered here.
+    # Cost: this sensitivity (0.93) also accepts TV speech -> 17/09
+    # it fired by itself 3x. If it happens again, the right path is to train
+    # a model with his voice (microwakeword.com), not to tighten the cutoff.
   on_wake_word_detected:
     - logger.log:
         format: "Wake word detetada: %s"
         args: ["wake_word.c_str()"]
-    # Deixa rasto em HA de QUAL modelo disparou e a que horas. O log da placa
-    # nao fica guardado, por isso um disparo "invisivel" (17/09: o painel
-    # acordou sozinho duas vezes com a TV ligada) nao tinha prova nenhuma.
+    # Leaves a trace in HA of WHICH model fired and at what time. The board log
+    # is not kept, so an "invisible" trigger (17/09: the panel
+    # woke by itself twice with the TV on) had no proof at all.
     - text_sensor.template.publish:
         id: ww_txt
         state: !lambda |-
@@ -1601,76 +1601,76 @@ micro_wake_word:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
 
-# v0.15.14 (18/10/2026) — O ICONE VERMELHO DEIXA DE APARECER QUANDO NAO SE DIZ NADA.
-#   Medido: a janela de conversa abre o microfone; se o VAD dispara com ruido (ou
-#   o utilizador nao fala), o whisper devolve texto vazio e o HA termina a pipeline
-#   com o erro `stt-no-text-recognized` (default_pipeline.py). O `on_error` pintava
-#   o ecra de erro (estado 4) durante 15 s. Agora esse codigo e' tratado como
-#   "ninguem falou": volta a espera e ao motor de wake word, sem alarme.
-# v0.15.15 (18/10/2026) — ECRA PRESO EM "A FALAR" SEM SOM (Parent bus is busy).
-#   Visto logo a seguir ao teste do silencio: o HA pediu o TTS, o motor de wake
-#   word estava a agarrar o barramento I2S e a coluna ficava a repetir
+# v0.15.14 (18/10/2026) — THE RED ICON STOPS SHOWING WHEN NOTHING IS SAID.
+#   Measured: the conversation window opens the microphone; if the VAD fires on noise (or
+#   the user does not speak), whisper returns empty text and HA ends the pipeline
+#   with the error `stt-no-text-recognized` (default_pipeline.py). `on_error` painted
+#   the error screen (state 4) for 15 s. Now that code is treated as
+#   "ninguem falou" (nobody spoke): back to idle and to the wake word engine, without an alarm.
+# v0.15.15 (18/10/2026) — SCREEN STUCK ON "A FALAR" WITH NO SOUND (Parent bus is busy).
+#   Seen right after the silence test: HA asked for the TTS, the wake word
+#   engine was holding the I2S bus and the speaker kept repeating
 #   "[E][i2s_audio.speaker:115] Driver failed to start; retrying in 1 second /
-#   Parent bus is busy" — sem `on_tts_stream_end` o va_state nunca voltava a 0 e
-#   o watchdog normal (que conta a partir da ultima MUDANCA de estado) nao
-#   disparava. Remedios: (a) `micro_wake_word.stop` no `on_tts_stream_start` e no
-#   interval de 2 s sempre que va_state e 2/3; (b) o ramo do silencio deixou de
-#   arrancar o motor a mao (quem o faz e o `on_end`, provado); (c) guarda nova
-#   em (1b): TTS pedido ha >15 s sem a coluna a correr -> destrava.
+#   Parent bus is busy" — without `on_tts_stream_end` the va_state never went back to 0 and
+#   the normal watchdog (which counts from the last state CHANGE) did not
+#   fire. Remedies: (a) `micro_wake_word.stop` in `on_tts_stream_start` and in the
+#   2 s interval whenever va_state is 2/3; (b) the silence branch stopped
+#   starting the engine by hand (that is `on_end`'s job, proven); (c) new guard
+#   in (1b): TTS requested >15 s ago without the speaker running -> release.
 voice_assistant:
   id: va
   microphone: box_mic
   speaker: box_speaker
-  # Liga o motor de wake word local ao assistente: e o que permite ao HA
-  # listar/escolher o modelo de wake word (sem isto os selects ficam unavailable)
+  # Connects the local wake word engine to the assistant: it is what lets HA
+  # list/choose the wake word model (without this the selects stay unavailable)
   micro_wake_word: mww
   use_wake_word: false
-  # IMPORTANTE: tem de ser FALSE. Com true, o ESPHome envia a flag
-  # VOICE_ASSISTANT_REQUEST_USE_WAKE_WORD no pedido a HA, e o HA passa a fazer
-  # detecao de wake word sobre o audio em vez de transcrever — a pipeline
-  # terminava sem STT nenhum. A wake word e detetada localmente pelo
-  # micro_wake_word, que chama voice_assistant.start com a wake_word.
-  # v0.15.13 — 3 -> 1. A supressão de ruído do ESPHome (Speex) no nível máximo
-  # come os sons fricativos: medido com o log do assist_pipeline, "janelas" saía
-  # "anelas" (perde o J), "vermelho" saía "bremeiro"/"bromeio" (perde o V) e
-  # um nome próprio saía "li li". O comando não casava com nenhuma frase, caía
-  # no agente
-  # e a resposta passava de 0,1 s para 9-14 s. Nível 1 limpa o fundo sem estragar
-  # as consoantes.
+  # IMPORTANT: it has to be FALSE. With true, ESPHome sends the
+  # VOICE_ASSISTANT_REQUEST_USE_WAKE_WORD flag in the request to HA, and HA then does
+  # wake word detection on the audio instead of transcribing — the pipeline
+  # ended with no STT at all. The wake word is detected locally by
+  # micro_wake_word, which calls voice_assistant.start with the wake_word.
+  # v0.15.13 — 3 -> 1. ESPHome noise suppression (Speex) at the maximum level
+  # eats the fricative sounds: measured with the assist_pipeline log, "janelas" came out as
+  # "anelas" (loses the J), "vermelho" came out "bremeiro"/"bromeio" (loses the V) and
+  # a proper noun came out "li li". The command matched no phrase, so it fell
+  # back to the agent
+  # and the reply went from 0.1 s to 9-14 s. Level 1 cleans the background without spoiling
+  # the consonants.
   noise_suppression_level: 1
-  # v0.15.13 — 31 -> 24 dBFS. No máximo o AGC levantava tanto o fundo que o VAD
-  # disparava com ruído da casa e as consoantes ficavam comprimidas. 24 dBFS
-  # continua a dar nível de sobra a 1-2 m do painel.
+  # v0.15.13 — 31 -> 24 dBFS. At the maximum the AGC lifted the background so much that the VAD
+  # fired on house noise and the consonants got compressed. 24 dBFS
+  # still gives plenty of level at 1-2 m from the panel.
   auto_gain: 24dBFS
-  # ⚠️ CRITICO para "ouve coisas a mais": o valor por omissao e 300s (5 MINUTOS!).
-  # Nesse periodo a placa continua a aceitar fala SEM precisar da wake word —
-  # apanha conversas e ruido da casa, transcreve lixo e empurra-o para o Hermes
-  # (lento). Foi assim que apareceu um "tipo cai louco Então já a..." vindo da
-  # televisao. Com 5s so aceita uma continuacao imediata e volta a exigir a
-  # wake word. NUNCA deixar o valor por omissao.
-  # v0.15.9: 5s -> 8s. Este campo NAO abre janela de escuta (so reinicia o
-  # conversation_id, voice_assistant.cpp:373) — quem abre é o `conv_janela`.
+  # ⚠️ CRITICAL for "it hears too much": the default value is 300s (5 MINUTES!).
+  # During that period the board keeps accepting speech WITHOUT needing the wake word —
+  # it catches conversations and house noise, transcribes junk and pushes it to Hermes
+  # (slow). That is how a "tipo cai louco Então já a..." turned up, coming from
+  # the television. With 5s it only accepts an immediate follow-up and requires the
+  # wake word again. NEVER leave it at the default value.
+  # v0.15.9: 5s -> 8s. This field does NOT open a listening window (it only resets the
+  # conversation_id, voice_assistant.cpp:373) — what opens it is `conv_janela`.
   conversation_timeout: 8s
-  # 1.0 (e nao 2.0). O HA ja aplica auto_gain a 31 dBFS sobre o audio do
-  # microfone; a isto somava-se um ganho digital de 2x, o que levantava o
-  # ruido de fundo a ~40% da escala e prejudicava o VAD e a transcricao
-  # (ex.: "que horas sao" transcrito como "Que oracao!").
+  # 1.0 (and not 2.0). HA already applies auto_gain at 31 dBFS on the microphone
+  # audio; on top of that came a 2x digital gain, which lifted the
+  # background noise to ~40% of the scale and harmed the VAD and the transcription
+  # (e.g. "que horas sao" transcribed as "Que oracao!").
   volume_multiplier: 1.0
   on_start:
     - logger.log: "Pipeline iniciada"
-    # v0.15.17: a linha de HUD da resposta anterior sai do ecra ao acordar.
+    # v0.15.17: the HUD line of the previous reply leaves the screen on wake-up.
     - text.set:
         id: hud_linha
         value: ""
-    # v0.15.9: se esta pipeline NAO foi aberta pela janela de continuacao, e uma
-    # wake word nova -> a cadeia de "respostas seguidas" recomeca do zero.
+    # v0.15.9: if this pipeline was NOT opened by the follow-up window, it is a
+    # new wake word -> the "respostas seguidas" chain starts again from zero.
     - if:
         condition:
           lambda: "return !id(conv_espera);"
         then:
           - lambda: "id(conv_count) = 0;"
     - script.execute: {id: hud_set, state: 1}
-    # Liberta o barramento I2S para a coluna enquanto a conversa decorre.
+    # Frees the I2S bus for the speaker while the conversation runs.
     - micro_wake_word.stop:
         id: mww
   on_listening:
@@ -1678,16 +1678,16 @@ voice_assistant:
     - script.execute: {id: hud_set, state: 1}
   on_stt_vad_end:
     - script.execute: {id: hud_set, state: 2}
-    # v0.15.9: ja houve fala -> a janela de continuacao cumpriu o papel. Fechar
-    # aqui (e nao no on_start, que dispara antes de alguem falar) e o que impede
-    # o `conv_janela` de mandar um `voice_assistant.stop` a meio de uma resposta.
+    # v0.15.9: there was speech already -> the follow-up window did its job. Closing
+    # here (and not in on_start, which fires before anyone speaks) is what stops
+    # `conv_janela` from sending a `voice_assistant.stop` in the middle of a reply.
     - script.stop: conv_janela
     - lambda: "id(conv_espera) = false;"
   on_stt_end:
     - logger.log: "STT terminado"
     - script.execute: {id: hud_set, state: 2}
-  # LED da antena: verde = a pensar (inclui os intents locais, que nunca chegam
-  # ao agente); vermelho = o pedido foi entregue ao agente e estamos a espera.
+  # Antenna LED: green = thinking (local intents included, which never reach
+  # the agent); red = the request went to the agent and we are waiting.
   on_intent_start:
     - if:
         condition:
@@ -1705,63 +1705,63 @@ voice_assistant:
     - script.execute: {id: hud_set, state: 3}
   on_tts_end:
     - logger.log: "Resposta falada"
-  # O on_tts_end acima dispara quando o URL do TTS fica pronto - NAO quando o
-  # audio acaba de tocar (chega a haver 30+ s entre os dois). O estado real de
-  # reproducao esta nestes dois gatilhos.
+  # The on_tts_end above fires when the TTS URL is ready — NOT when the
+  # audio finishes playing (there can be 30+ s between the two). The real playback
+  # state is in these two triggers.
   on_tts_stream_start:
-    # v0.15.15: a coluna vai precisar do barramento I2S — o motor de wake word
-    # tem de sair da frente ANTES do primeiro byte (senao: "Parent bus is busy"
-    # em ciclo e o ecra preso em "a falar").
+    # v0.15.15: the speaker is going to need the I2S bus — the wake word engine
+    # has to get out of the way BEFORE the first byte (otherwise: "Parent bus is busy"
+    # in a loop and the screen stuck on "a falar").
     - micro_wake_word.stop:
         id: mww
     - lambda: "id(tts_pend_ms) = millis();"
     - script.execute: {id: hud_set, state: 3}
   on_tts_stream_end:
     - lambda: "id(tts_pend_ms) = 0;"
-    # O ultimo byte ja saiu para a coluna. Quem devolve o motor a escuta E o
-    # ecra a "em espera" e o mww_resume, que espera pelo barramento I2S (o
-    # estalido da coluna a desligar) em vez de contar um tempo fixo.
-    # v0.15.9: passa pelo modo conversa — se a cadeia ainda nao chegou ao teto
-    # (`Respostas seguidas`), reabre o microfone sem wake word; senao, e o
-    # `conv_followup` que chama o mww_resume (o comportamento antigo).
+    # The last byte has already left for the speaker. What returns the engine to listening
+    # and the screen to "em espera" is mww_resume, which waits for the I2S bus (the
+    # click of the speaker switching off) instead of counting a fixed time.
+    # v0.15.9: it goes through conversation mode — if the chain has not reached the ceiling
+    # yet (`Respostas seguidas`), it reopens the microphone without a wake word; if not, it is
+    # `conv_followup` that calls mww_resume (the old behaviour).
     - script.execute: {id: conv_followup}
   on_error:
     - logger.log: "Erro no assistente"
-    # v0.15.9: um erro fecha a cadeia de continuacoes (nao insistir em cima de erro).
+    # v0.15.9: an error closes the chain of follow-ups (do not insist on top of an error).
     - lambda: |-
         id(conv_espera) = false;
         id(conv_count) = 0;
         id(tts_pend_ms) = 0;
         ESP_LOGW("vaerro", "codigo=%s mensagem=%s", code.c_str(), message.c_str());
     - script.stop: conv_janela
-    # v0.15.14: "ninguem falou" (o VAD disparou com ruido e o STT devolveu vazio)
-    # NAO e' avaria — o HA fecha a pipeline com `stt-no-text-recognized`. Voltar
-    # a espera sem pintar o ecra de erro evita o icone vermelho a cada silencio.
+    # v0.15.14: "nobody spoke" (the VAD fired on noise and the STT returned empty)
+    # is NOT a fault — HA closes the pipeline with `stt-no-text-recognized`. Going
+    # back to idle without painting the error screen avoids the red icon on every silence.
     - if:
         condition:
           lambda: 'return code == "stt-no-text-recognized";'
         then:
           - logger.log: "Nada dito -> volta a espera sem erro"
           - script.execute: {id: hud_set, state: 0}
-          # v0.15.15: NAO arrancar o motor aqui. Quem o devolve a escuta e o
-          # `on_end` (espera 2 s e testa o estado), que ja e o caminho provado;
-          # arrancar a mao punha o motor a agarrar o I2S antes de a coluna
-          # largar o barramento -> "Parent bus is busy" em ciclo.
+          # v0.15.15: do NOT start the engine here. What returns it to listening is
+          # `on_end` (waits 2 s and tests the state), which is already the proven path;
+          # starting it by hand put the engine grabbing the I2S before the speaker
+          # released the bus -> "Parent bus is busy" in a loop.
         else:
           - script.execute: {id: hud_set, state: 4}
           - micro_wake_word.start:
               id: mww
   on_end:
     - logger.log: "Conversa terminada"
-    # v0.15.9: a pipeline fechou -> a janela de espera ja nao existe.
+    # v0.15.9: the pipeline has closed -> the waiting window no longer exists.
     - lambda: "id(conv_espera) = false;"
-    # Este gatilho dispara quando a pipeline fecha - dezenas de segundos ANTES
-    # de o audio acabar de tocar. Por isso aqui NAO se repoe o ecra nem se
-    # arranca o motor: faze-lo poe o motor a agarrar o barramento I2S a meio da
-    # reproducao e a coluna nunca arranca - o ecra dizia "a falar" e nao se
-    # ouvia nada ("Cannot receive audio, buffer is full"). O caso normal e
-    # tratado no on_tts_stream_end. Aqui fica so a rede para respostas SEM fala
-    # nenhuma, que nunca chegam a disparar aquele gatilho.
+    # This trigger fires when the pipeline closes — tens of seconds BEFORE
+    # the audio finishes playing. That is why the screen is NOT restored here and the
+    # engine is not started: doing so puts the engine grabbing the I2S bus in the middle of
+    # playback and the speaker never starts — the screen said "a falar" and nothing
+    # was heard ("Cannot receive audio, buffer is full"). The normal case is
+    # handled in on_tts_stream_end. Here only the net for replies with NO speech
+    # at all remains, which never get to fire that trigger.
     - delay: 2s
     - if:
         condition:
@@ -1769,15 +1769,15 @@ voice_assistant:
         then:
           - script.execute: {id: mww_resume}
 
-# --- ECRÃ ST7796 (mipi_spi, 480x320) -----------------------------------------
+# --- ST7796 SCREEN (mipi_spi, 480x320) ---------------------------------------
 display:
   - platform: mipi_spi
     id: main_display
     model: ST7796
-    # v0.17.11 — 40 -> 80 MHz: o mipi_spi só oferece 40 ou 80 para o ST7796 (o
-    # 60 é recusado no `config`). A 80 MHz o frame completo desce de ~61 ms
-    # para ~31 ms, que é o que se nota como "arrasto" ao mover o robô inteiro
-    # (o LVGL invalida 480x320 e o ecrã atualiza-se em faixas).
+    # v0.17.11 — 40 -> 80 MHz: mipi_spi only offers 40 or 80 for the ST7796 (60
+    # is rejected by `config`). At 80 MHz the full frame drops from ~61 ms
+    # to ~31 ms, which is what feels like "drag" when the whole robot moves
+    # (LVGL invalidates 480x320 and the screen refreshes in bands).
     data_rate: 80MHz
     invert_colors: true
     transform:
@@ -1790,16 +1790,16 @@ display:
     cs_pin: GPIO5
     dc_pin: GPIO47
     rotation: ${rotate_display}
-    # LVGL manda desenhar: nada de update_interval nem de lambda aqui.
+    # LVGL drives the drawing: no update_interval and no lambda here.
     update_interval: never
     auto_clear_enabled: false
 
 # =========================================================================
-# CARA DO ROBÔ — geometria do manifest do Jarvis (480x320)
-# Estrutura: pagina → robo (treme/respira) → cabeca (inclina) + extras
-# (ondas, notas, z, pontos, anéis). Coordenadas absolutas do ecrã em toda a
-# árvore; cada grupo é um obj transparente 480x320 em (0,0) com pad 0.
-# Só `obj`: no painel os `arc`/`line` do LVGL saíam cinzentos.
+# ROBOT FACE — geometry from the Jarvis manifest (480x320)
+# Structure: page → robo (shake/breathe) → cabeca (tilt) + extras
+# (waves, notes, z, dots, rings). Absolute screen coordinates across the
+# whole tree; each group is a transparent 480x320 obj at (0,0) with pad 0.
+# `obj` only: on this panel LVGL `arc`/`line` came out grey.
 # =========================================================================
 lvgl:
   buffer_size: 25%
@@ -2430,20 +2430,20 @@ lvgl:
             text_font: font_small
             text_color: 0x2F3947
   # ---------------------------------------------------------------------
-  # Animações. `loop` repete; o "vai-e-vem" de duas metades faz-se com duas
-  # animações e `on_stop` a arrancar a contrária — MAS quando o vai-e-vem é
-  # simétrico há melhor: `timing: round_trip` (o ESPHome TEM round_trip), que
-  # dentro da MESMA animação vai de `from` a `to` e volta; como acaba no valor
-  # inicial, o `loop` não dá salto nenhum.
-  # Só x/y/opa/transform_* são animáveis: largura e altura NÃO.
+  # Animations. `loop` repeats; the two-halves back-and-forth is done with two
+  # animations and `on_stop` starting the opposite one — BUT when that back-and-forth is
+  # symmetric there is something better: `timing: round_trip` (ESPHome HAS it), which
+  # inside the SAME animation goes from `from` to `to` and back; ending at the
+  # initial value, so `loop` produces no jump at all.
+  # Only x/y/opa/transform_* are animatable: width and height are NOT.
   # ---------------------------------------------------------------------
   animations:
-    # (a respiracao do mockup saiu: animar o grupo de ecra inteiro obrigava o
-    # LVGL a redesenhar 480x320 a 60 fps, saturava o SPI a 40 MHz e a voz
-    # ficava lenta e com falhas — medido no painel a 29/10)
-    # v0.17.9 — alarme: era `loop` de -5 a 5 em 90 ms, ~11 saltos por segundo,
-    # mais depressa do que o painel desenha (tremia, não abanava). Agora é um
-    # vaivém contínuo de 380 ms com ease_in_out.
+    # (the mockup breathing is gone: animating the whole-screen group forced
+    # LVGL to redraw 480x320 at 60 fps, saturated the SPI at 40 MHz and the voice
+    # went slow and glitchy — measured on the panel on 29/10)
+    # v0.17.9 — alarm: it used to be a `loop` from -5 to 5 in 90 ms, ~11 jumps per second,
+    # faster than the panel draws (it trembled, it did not shake). Now it is a
+    # continuous 380 ms back-and-forth with ease_in_out.
     - id: tremer
       duration: 900ms
       loop: true
@@ -2459,8 +2459,8 @@ lvgl:
     - id: inclina_a
       duration: 1200ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -2487,8 +2487,8 @@ lvgl:
     - id: balanca_a
       duration: 1400ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -2515,8 +2515,8 @@ lvgl:
     - id: boca_a
       duration: 90ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -2718,20 +2718,20 @@ lvgl:
             from: 100%
             to: 25%
 
-# NOTA (12/09/2026): esta revisão da placa NÃO tem touchscreen — o GT911 não
-# existe/ não responde e a config oficial do fabricante também não o define.
-# Bloco removido. Se um dia se confirmar hardware com touch, o bloco era:
+# NOTE (12/09/2026): this board revision has NO touchscreen — the GT911 does not
+# exist/does not respond and the manufacturer's official config does not define it either.
+# Block removed. If hardware with touch is ever confirmed, the block was:
 #   touchscreen: [{platform: gt911, i2c_id: bus_a, address: 0x5D|0x14, display: main_display}]
 #
 
-# --- CÂMARA (GC0308/OV5640, auto-detetada) -----------------------------------
-# Pinos do ficheiro oficial do fabricante (spotpear-tv_hw.yaml).
-# GPIO3 é strapping pin mas é usado aqui como D5 (confirmado no oficial).
-# --- CAMARA (desligada de proposito) ----------------------------------------
-# Nao serve de sensor de movimento: a placa nao tem LED de infravermelhos (de
-# noite nao ve nada) e o ESPHome nao faz deteccao de movimento por imagem.
-# Manter isto custava 12 KB de RAM, 65 KB de flash e ~1,2 MB de PSRAM.
-# Para voltar a por: tirar os '#' a este bloco.
+# --- CAMERA (GC0308/OV5640, auto-detected) -----------------------------------
+# Pins from the manufacturer's official file (spotpear-tv_hw.yaml).
+# GPIO3 is a strapping pin but it is used here as D5 (confirmed in the official one).
+# --- CAMERA (disabled on purpose) -------------------------------------------
+# No use as a motion sensor: the board has no infrared LED (at
+# night it sees nothing) and ESPHome does not do image motion detection.
+# Keeping this cost 12 KB of RAM, 65 KB of flash and ~1.2 MB of PSRAM.
+# To put it back: remove the '#' from this block.
 # esp32_camera:
 #   id: lcd_camera
 #   name: "Câmara"
@@ -2758,19 +2758,19 @@ lvgl:
 #   idle_framerate: 0.1fps
 #   frame_buffer_count: 2
 #   frame_buffer_location: PSRAM
-#   # Este sensor (GC0308) e muito fraco com pouca luz — puxar ganho/exposicao
+#   # This sensor (GC0308) is very weak in low light — push gain/exposure
 #   brightness: 2
 #   contrast: 0
 #   aec2: true
 #   ae_level: 2
 #   agc_gain_ceiling: 32X
 #
-# --- RELÓGIO / TEMPO ---------------------------------------------------------
+# --- CLOCK / TIME ------------------------------------------------------------
 time:
   - platform: sntp
     id: sntp_time
 
-# --- FONTES ------------------------------------------------------------------
+# --- FONTS -------------------------------------------------------------------
 font:
   - file: "gfonts://Roboto"
     id: font_big
@@ -2780,8 +2780,8 @@ font:
     id: font_normal
     size: 24
     glyphs: " %°·–&'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
-  # Numero grande: o % do volume (ecra de media) e as HORAS no centro do anel
-  # quando esta em espera (o ":" entrou em 26/09 por causa disso).
+  # Big number: the volume % (media screen) and the TIME in the centre of the ring
+  # when idle (the ":" came in on 26/09 because of that).
   - file: "gfonts://Roboto"
     id: font_med
     size: 40
@@ -2791,19 +2791,19 @@ font:
     size: 16
     glyphs: " %°·–&'0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÀÁÂÃÇÉÊÍÓÔÕÚàáâãçéêíóôõú:.,;!?()-_/"
 
-# --- SENSORES DE ESTADO ------------------------------------------------------
+# --- STATE SENSORS -----------------------------------------------------------
 debug:
   update_interval: 60s
 
 text_sensor:
-  # 29/10/2026 — diagnostico da contagem do temporizador: fim/agora/rest tal
-  # como o firmware os ve. E o primeiro sitio a olhar se o ecra nao mostrar nada.
+  # 29/10/2026 — timer countdown diagnostics: end/now/remaining just
+  # as the firmware sees them. It is the first place to look if the screen shows nothing.
   - platform: template
     name: "Depuracao contagem"
     id: dbg_contagem
     icon: "mdi:bug"
-  # Diagnostico: porque reiniciou a ultima vez (brownout / watchdog / panic /
-  # software). Adicionado para investigar os reinicios do build 2026.9.0.
+  # Diagnostics: why it rebooted last time (brownout / watchdog / panic /
+  # software). Added to investigate the reboots of build 2026.9.0.
   - platform: debug
     reset_reason:
       name: "Motivo do ultimo reset"
@@ -2828,10 +2828,10 @@ text_sensor:
       if (id(va).is_running()) return {"a ouvir/falar"};
       return {"pronto"};
 
-  # Ultimo disparo da wake word (modelo + hora), escrito pelo
-  # `on_wake_word_detected` do micro_wake_word. Existe SO para diagnostico:
-  # o log da placa nao fica guardado e sem isto nao ha prova de quando/quem
-  # acordou o painel (17/09: acordou sozinho duas vezes com a TV ligada).
+  # Last wake word trigger (model + time), written by
+  # micro_wake_word's `on_wake_word_detected`. It exists ONLY for diagnostics:
+  # the board log is not kept and without this there is no proof of when/who
+  # woke the panel (17/09: it woke by itself twice with the TV on).
   - platform: template
     name: "Ultima wake word"
     id: ww_txt
@@ -2840,10 +2840,10 @@ text_sensor:
     update_interval: never
     lambda: return {""};
 
-  # Versao do firmware + do ESPHome que o compilou. O HA ja mostra isto na
-  # pagina do device (sw_version), mas assim fica visivel num cartao de
-  # dashboard. `ESPHOME_VERSION` e uma macro que o build escreve (versao do
-  # ESPHome com que este binario foi compilado).
+  # Firmware version + the ESPHome that compiled it. HA already shows this on the
+  # device page (sw_version), but this way it is visible on a
+  # dashboard card. `ESPHOME_VERSION` is a macro that the build writes (the version of
+  # ESPHome with which this binary was compiled).
   - platform: template
     name: "Versão do firmware"
     id: fw_version_txt

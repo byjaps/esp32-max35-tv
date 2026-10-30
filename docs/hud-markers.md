@@ -25,9 +25,9 @@ component. The firmware only receives "here is a string to draw".
 
 ```
 Agent reply (text)                         HA conversation component            Panel
-"[HW:/display/info:{\"text\":\"23:45\"}] Boa noite."
+"[HW:/display/info:{\"text\":\"23:45\"}] Good night."
         │                                            │
-        ├─ markers extracted, speech = "Boa noite." ─┼──→ TTS ─────────────────→ 🔊
+        ├─ markers extracted, speech = "Good night." ─┼──→ TTS ─────────────────→ 🔊
         └─ text.set_value(text.mini_tv_linha_hud,"23:45") ──────────────────────→ 🖥
 ```
 
@@ -99,11 +99,18 @@ The component only adds the instruction **on turns that come from this panel**
 Other conversation channels and the local intents fast path are untouched — prefixing the
 text there would break intent matching.
 
+The rule is injected **in Portuguese**, because the panel and its model speak pt-PT; this is
+exactly the text the agent receives (`PANEL_RULE` in `hw_markers.py`):
+
 ```
 Convenção do painel de voz: se a resposta tiver de mostrar algo no ecrã, começa com
 [HW:/display/info:{"text":"..."}] (máx. 60 caracteres, sem repetir o que dizes em voz
 alta) e depois o texto normal. O marcador não é falado.
 ```
+
+In English: *"Voice-panel convention: if the answer has to show something on screen, start
+with [HW:/display/info:{"text":"..."}] (max 60 characters, do not repeat what you say out
+loud) and then the normal text. The marker is never spoken."*
 
 ## Testing without speaking to the panel
 
@@ -114,7 +121,7 @@ drawing end-to-end, send a marker explicitly:
 ```bash
 curl -s -X POST http://homeassistant:8123/api/conversation/process \
   -H "Authorization: Bearer $HA_TOKEN" -H "Content-Type: application/json" \
-  -d '{"text":"Responde só com: [HW:/display/info:{\"text\":\"TESTE\"}] Feito.","agent_id":"conversation.hermes"}'
+  -d '{"text":"Answer only with: [HW:/display/info:{\"text\":\"TESTE\"}] Feito.","agent_id":"conversation.hermes"}'
 ```
 
 The reply must be `Feito.` and the entity must read `TESTE`.

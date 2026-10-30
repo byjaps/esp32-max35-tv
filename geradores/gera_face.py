@@ -1,15 +1,15 @@
-"""Gera a secção `lvgl:` da cara do robô a partir do manifest do Jarvis (v1.0).
+"""Generates the `lvgl:` section of the robot face from the Jarvis manifest (v1.0).
 
-Porquê um gerador: são ~100 widgets com coordenadas medidas no manifest; assim as
-coordenadas ficam num sítio só e o YAML sai sempre igual.
+Why a generator: it is ~100 widgets whose coordinates are measured in the manifest; so
+the coordinates live in a single place and the YAML always comes out the same.
 
-Lições do painel (29/10) que este ficheiro já incorpora:
-  * `arc` e `line` do LVGL saem CINZENTOS no dispositivo → tudo é `obj`;
-  * crescentes (boca, sobrancelhas, ondas) = elipse cheia + elipse da cor do fundo;
-  * coordenadas ABSOLUTAS dentro de grupos transparentes em (0,0) 480x320 com
-    `pad_all: 0` (relativas dentro de caixas pequenas saíam deslocadas);
-  * `scroll_dir: NONE` + `scrollbar_mode: "OFF"` (o tronco sai do ecrã e o LVGL
-    mostrava a barra de deslocamento à direita).
+Lessons from the panel (29/10) that this file already takes into account:
+  * LVGL `arc` and `line` come out GREY on the device → everything is `obj`;
+  * crescents (mouth, eyebrows, waves) = full ellipse + ellipse in the background colour;
+  * ABSOLUTE coordinates inside transparent 480x320 groups at (0,0) with
+    `pad_all: 0` (relative ones inside small boxes came out shifted);
+  * `scroll_dir: NONE` + `scrollbar_mode: "OFF"` (the trunk goes off-screen and LVGL
+    showed the scrollbar on the right).
 """
 import os
 import math
@@ -100,13 +100,13 @@ def texto(ident, x, y, fonte, cor, txt="", largura=None, alinhar=None,
         L.append(f"{p}hidden: true")
 
 
-# ---------------------------------------------------------------- cabeçalho
+# ---------------------------------------------------------------- header
 L.extend("""# =========================================================================
-# CARA DO ROBÔ — geometria do manifest do Jarvis (480x320)
-# Estrutura: pagina → robo (treme/respira) → cabeca (inclina) + extras
-# (ondas, notas, z, pontos, anéis). Coordenadas absolutas do ecrã em toda a
-# árvore; cada grupo é um obj transparente 480x320 em (0,0) com pad 0.
-# Só `obj`: no painel os `arc`/`line` do LVGL saíam cinzentos.
+# ROBOT FACE — geometry from the Jarvis manifest (480x320)
+# Structure: page → robo (shake/breathe) → cabeca (tilt) + extras
+# (waves, notes, z, dots, rings). Absolute screen coordinates across the
+# whole tree; each group is a transparent 480x320 obj at (0,0) with pad 0.
+# `obj` only: on this panel LVGL `arc`/`line` came out grey.
 # =========================================================================
 lvgl:
   buffer_size: 25%
@@ -123,22 +123,22 @@ lvgl:
       scrollbar_mode: "OFF"
       widgets:""".splitlines())
 
-# ---------------------------------------------------------------- robo
+# ---------------------------------------------------------------- robot
 grupo("robo", 8)
 
-# corpo
+# body
 obj("tronco", M["tronco"], "0xE9EFF7", ind=14, grad="0xBCC7D6")
 obj("pescoco", M["pescoco"], "0xD6DEEA", ind=14)
 
-# cabeça (grupo que inclina)
+# head (group that tilts)
 p = " " * 18
 L.append(" " * 14 + "- obj:")
 for k, v in (("id", "cabeca"), ("x", 0), ("y", 0), ("width", 480), ("height", 320),
              ("pad_all", 0), ("border_width", 0), ("bg_opa", "TRANSP"),
              ("scroll_dir", "NONE"), ("scrollbar_mode", '"OFF"'),
              ("transform_width", "100%"), ("transform_height", "100%"),
-             # PIVO AO CENTRO: por omissao o LVGL roda em torno do canto superior
-             # esquerdo do objeto e a cabeca deslocava-se pelo ecra (visto 29/10).
+# PIVOT AT THE CENTRE: by default LVGL rotates around the top-left corner of the
+# object and the head drifted across the screen (seen 29/10).
              ("transform_pivot_x", "50%"), ("transform_pivot_y", "50%")):
     L.append(f"{p}{k}: {v}")
 L.append(f"{p}widgets:")
@@ -154,7 +154,7 @@ obj("viseira", M["viseira"], VISEIRA, ind=ind, borda=1, borda_cor="0x263444")
 obj("led_orelha_e", M["led_e"], "0x5A6E82", ind=ind)
 obj("led_orelha_d", M["led_d"], "0x5A6E82", ind=ind)
 
-# olhos + brilho
+# eyes + highlight
 for nome, ox in (("e", 179), ("d", 255)):
     obj(f"olho_{nome}", (ox, 159, 46, 54, 50), CIANO, ind=ind)
     obj(f"brilho_{nome}", (ox + 11, 167, 22, 14, 50), "0xF2FEFF", ind=ind)
@@ -162,19 +162,19 @@ for nome, ox in (("e", 179), ("d", 255)):
 obj("olho_fechado_e", (179, 183, 46, 9, 4), CIANO, ind=ind, oculto=True)
 obj("olho_fechado_d", (255, 183, 46, 9, 4), CIANO, ind=ind, oculto=True)
 
-# olhos em X (sem ligação)
+# eyes as an X (no connection)
 for i, cx in enumerate((202, 278)):
     for j, rot in enumerate((45, 135)):
         obj(f"x_{i}_{j}", (cx - 21, 182, 42, 8, 4), VERMELHO, ind=ind,
             oculto=True, transform_rotation=rot)
 
-# sobrancelhas (crescente)
+# eyebrows (crescent)
 for nome, r in (("e", M["sobrancelha_e"]), ("d", M["sobrancelha_d"])):
     obj(f"sobrancelha_{nome}", r, CIANO, ind=ind, oculto=True)
     obj(f"sobrancelha_corte_{nome}", (r[0], r[1] + 7, r[2], r[3], r[4]), VISEIRA,
         ind=ind, oculto=True)
 
-# bocas
+# mouths
 obj("boca_sorriso", (220, 219, 40, 26, 50), CIANO, ind=ind)
 obj("boca_corte", (220, 210, 40, 26, 50), VISEIRA, ind=ind)
 obj("boca_aberta", (227, 220, 26, 24, 50), CIANO, ind=ind, oculto=True)
@@ -182,7 +182,7 @@ obj("boca_aberta_furo", (234, 227, 12, 11, 50), VISEIRA, ind=ind, oculto=True)
 obj("boca_triste", (220, 226, 40, 26, 50), VERMELHO, ind=ind, oculto=True)
 obj("boca_triste_corte", (220, 235, 40, 26, 50), VISEIRA, ind=ind, oculto=True)
 
-# -------- extras (fora da cabeça: não inclinam com ela)
+# -------- extras (outside the head: they do not tilt with it)
 obj("onda1", (400, 170, 40, 40, 50), CIANO, ind=14, oculto=True)
 obj("onda1_corte", (406, 170, 40, 40, 50), FUNDO, ind=14, oculto=True)
 obj("onda2", (386, 156, 68, 68, 50), CIANO, ind=14, oculto=True)
@@ -198,7 +198,7 @@ for i, r in enumerate((14, 28, 44)):
         oculto=True, borda=3, borda_cor=CIANO, bg_opa="TRANSP",
         transform_width="100%", transform_height="100%")
 
-# notas musicais (cada nota é um grupo que sobe)
+# musical notes (each note is a group that rises)
 for n, (x, y) in enumerate(((396, 150), (430, 128)), start=1):
     pp = " " * 18
     L.append(" " * 14 + "- obj:")
@@ -217,42 +217,42 @@ for n, (x, y) in enumerate(((396, 150), (430, 128)), start=1):
     obj(f"nota{n}_cabeca", (0, 28, 12, 10, 50), CIANO, ind=20)
     obj(f"nota{n}_haste", (10, 0, 3, 32, 2), CIANO, ind=20)
 
-# z do sono
+# sleep Zs
 for i, (x, y, f) in enumerate(((390, 108, "font_normal"), (414, 92, "font_small"),
                                (434, 80, "font_small")), start=1):
     texto(f"z{i}", x, y, f, CIANO, "Z", oculto=True, ind=14)
 
-# exclamações do alarme
-# Exclamações do alarme desenhadas (a font_med só tem dígitos: "!" saía como
-# retângulo vazio). Barra + ponto, como no mockup.
+# alarm exclamation marks
+# Alarm exclamation marks drawn by hand (font_med only has digits: "!" came out as
+# an empty box). Bar + dot, as in the mockup.
 for lado, ex in (("esq", 70), ("dir", 398)):
     obj(f"excl_{lado}_barra", (ex, 120, 6, 26, 3), VERMELHO, ind=8, oculto=True)
     obj(f"excl_{lado}_ponto", (ex, 152, 6, 6, 50), VERMELHO, ind=8, oculto=True)
 
-# ---------------------------------------------------------------- textos
+# ---------------------------------------------------------------- texts
 texto("relogio_big", 14, 4, "font_med", "0xFFFFFF", "00:00")
 texto("relogio_small", 14, 4, "font_small", TEXTO, "00:00", oculto=True)
 texto("temporizador", 396, 12, "font_small", VERMELHO, "", largura=72, alinhar="RIGHT")
-# Legenda no peito, entre os ombros: rola em círculo quando o texto não cabe.
+# Chest caption, between the shoulders: scrolls in a circle when the text does not fit.
 texto("legenda", 150, 298, "font_small", "0x2F3947", "", largura=180,
       alinhar="CENTER", longo="SCROLL_CIRCULAR")
 
-# ---------------------------------------------------------------- animações
+# ---------------------------------------------------------------- animations
 L.extend("""  # ---------------------------------------------------------------------
-  # Animações. `loop` repete; o "vai-e-vem" de duas metades faz-se com duas
-  # animações e `on_stop` a arrancar a contrária — MAS quando o vai-e-vem é
-  # simétrico há melhor: `timing: round_trip` (o ESPHome TEM round_trip), que
-  # dentro da MESMA animação vai de `from` a `to` e volta; como acaba no valor
-  # inicial, o `loop` não dá salto nenhum.
-  # Só x/y/opa/transform_* são animáveis: largura e altura NÃO.
+  # Animations. `loop` repeats; the two-halves back-and-forth is done with two
+  # animations and `on_stop` starting the opposite one — BUT when that back-and-forth is
+  # symmetric there is something better: `timing: round_trip` (ESPHome HAS it), which
+  # inside the SAME animation goes from `from` to `to` and back; ending at the
+  # initial value, so `loop` produces no jump at all.
+  # Only x/y/opa/transform_* are animatable: width and height are NOT.
   # ---------------------------------------------------------------------
   animations:
-    # (a respiracao do mockup saiu: animar o grupo de ecra inteiro obrigava o
-    # LVGL a redesenhar 480x320 a 60 fps, saturava o SPI a 40 MHz e a voz
-    # ficava lenta e com falhas — medido no painel a 29/10)
-    # v0.17.9 — alarme: era `loop` de -5 a 5 em 90 ms, ~11 saltos por segundo,
-    # mais depressa do que o painel desenha (tremia, não abanava). Agora é um
-    # vaivém contínuo de 380 ms com ease_in_out.
+    # (the mockup breathing is gone: animating the whole-screen group forced
+    # LVGL to redraw 480x320 at 60 fps, saturated the SPI at 40 MHz and the voice
+    # went slow and glitchy — measured on the panel on 29/10)
+    # v0.17.9 — alarm: it used to be a `loop` from -5 to 5 in 90 ms, ~11 jumps per second,
+    # faster than the panel draws (it trembled, it did not shake). Now it is a
+    # continuous 380 ms back-and-forth with ease_in_out.
     - id: tremer
       duration: 900ms
       loop: true
@@ -268,8 +268,8 @@ L.extend("""  # ----------------------------------------------------------------
     - id: inclina_a
       duration: 1200ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -296,8 +296,8 @@ L.extend("""  # ----------------------------------------------------------------
     - id: balanca_a
       duration: 1400ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -324,8 +324,8 @@ L.extend("""  # ----------------------------------------------------------------
     - id: boca_a
       duration: 90ms
       on_stop:
-        # `on_stop` também corre quando o `lvgl.animation.stop` a interrompe — sem
-        # esta guarda, parar A arrancava B e B arrancava A (ping-pong eterno).
+        # `on_stop` also runs when `lvgl.animation.stop` interrupts it — without
+        # this guard, stopping A started B and B started A (endless ping-pong).
         - if:
             condition:
               lambda: "return id(anim_ok);"
@@ -527,7 +527,7 @@ L.extend("""  # ----------------------------------------------------------------
             from: 100%
             to: 25%""".splitlines())
 
-# v0.17.13 — escreve ao lado do gerador (vive em ~/homelab/esphome-build/geradores)
+# v0.17.13 — writes next to the generator (it lives in ~/homelab/esphome-build/geradores)
 open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bloco_lvgl.yaml"),
      "w", encoding="utf-8").write(
     "\n".join(L) + "\n")
